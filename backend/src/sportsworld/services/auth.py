@@ -15,11 +15,38 @@ from ..integration.gt4 import solve_gt4
 
 HOST = "https://run.gxapp.iydsj.com"
 LOGIN_PATH = "/api/v70100/login"
+LOGOUT_PATH = "/api/v6/user/logout"
 GEECHECK_PATH = "/api/v65/security/checkGeeUse"
 GEEVALIDATE_PATH = "/api/v70270/security/geevalidate"
 CAPTCHA_ID_BIZ0 = "8c065103d81f5fd3efec8ad3e3a84c30"
 
 # bizType=0 的 captchaId
+
+
+class Session:
+    """登录会话：业务字段 + 登出所需的协议态（identity / EnvelopeSession）。"""
+
+    def __init__(self, biz: dict, identity: dict, envelope: EnvelopeSession):
+        self.uid = get_field(biz, "uid") or 0
+        self.token = get_field(biz, "token") or ""
+        self.unid = str(get_field(biz, "unid") or "0")
+        self.name = get_field(biz, "name") or ""
+        self.weight = get_field(biz, "weight") or 0
+        self._identity = identity
+        self._envelope = envelope
+
+    def logout(self) -> None:
+        """POST /api/v6/user/logout 登出并打印结果。"""
+        try:
+            with httpx.Client(timeout=30.0) as client:
+                envelope_request(
+                    client, self._envelope, self._identity, "POST",
+                    HOST + LOGOUT_PATH, "{}",
+                    uid=self.uid, token=self.token,
+                )
+            print(f"[logout] 已请求登出 uid={self.uid}")
+        except Exception as e:
+            print(f"[logout] 失败: {e}")
 
 
 def default_identity() -> dict:
@@ -54,8 +81,8 @@ def gee_check(client: httpx.Client, session: EnvelopeSession, identity: dict, us
         return False
 
 
-def login(username: str, password: str, identity: dict | None = None) -> dict:
-    """完整登录：checkGeeUse -> [GT4 -> geevalidate] -> login。成功返回 Session dict。"""
+def login(username: str, password: str, identity: dict | None = None) -> Session:
+    """完整登录：checkGeeUse -> [GT4 -> geevalidate] -> login。成功返回 Session。"""
     identity = identity or default_identity()
     session = EnvelopeSession()
     uuid_value = str(uuid.uuid4())
@@ -118,17 +145,9 @@ def login(username: str, password: str, identity: dict | None = None) -> dict:
         )
 
     biz = check_business(out["business"])
-    uid = get_field(biz, "uid") or 0
-    token = get_field(biz, "token") or ""
-    if not uid or not token:
+    sess = Session(biz, identity, session)
+    if not sess.uid or not sess.token:
         raise RuntimeError(f"登录响应缺 uid/token: {str(biz)[:200]}")
-    sess = {
-        "uid": uid,
-        "token": token,
-        "unid": str(get_field(biz, "unid") or "0"),
-        "name": get_field(biz, "name") or "",
-        "weight": get_field(biz, "weight") or 0,
-    }
-    print(f"[session] uid={sess['uid']} token={sess['token'][:8]}*** "
-          f"unid={sess['unid']} name={sess['name']} weight={sess['weight']}")
+    print(f"[session] uid={sess.uid} token={sess.token[:8]}*** "
+          f"unid={sess.unid} name={sess.name} weight={sess.weight}")
     return sess
