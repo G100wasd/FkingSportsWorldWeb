@@ -32,15 +32,15 @@ class Session:
         self.unid = str(get_field(biz, "unid") or "0")
         self.name = get_field(biz, "name") or ""
         self.weight = get_field(biz, "weight") or 0
-        self._identity = identity
-        self._envelope = envelope
+        self.identity = identity
+        self.envelope = envelope
 
     def logout(self) -> None:
         """POST /api/v6/user/logout 登出并打印结果。"""
         try:
             with httpx.Client(timeout=30.0) as client:
                 envelope_request(
-                    client, self._envelope, self._identity, "POST",
+                    client, self.envelope, self.identity, "POST",
                     HOST + LOGOUT_PATH, "{}",
                     uid=self.uid, token=self.token,
                 )
