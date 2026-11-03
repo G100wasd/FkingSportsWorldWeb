@@ -20,8 +20,10 @@ plt.rcParams["axes.unicode_minus"] = False
 from sportsworld.services import geo, policy
 from sportsworld.services.auth import login
 
-USERNAME = "18928206383"
-PASSWORD = "20061030Cjj"
+# USERNAME = "18928206383"
+# PASSWORD = "20061030Cjj"
+USERNAME = "18818920029"
+PASSWORD = "Wasd10086"
 
 # 锚点（BD-09）：校区西侧坐标，服务端就近分配跑步区
 ANCHOR_LAT = 22.9058142
