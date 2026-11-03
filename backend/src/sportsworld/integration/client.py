@@ -18,9 +18,12 @@ def envelope_request(
     uid: int = -1,
     token: str = "",
     extra_headers: dict | None = None,
+    ts_ms: int | None = None,
 ) -> dict:
-    """发送信封请求，返回 {http_status, business, raw}。"""
-    ts = now_ms()
+    """发送信封请求，返回 {http_status, business, raw}。
+
+    ts_ms 覆盖请求时间戳（header/container 共用）；None 取当前时间。"""
+    ts = ts_ms if ts_ms is not None else now_ms()
     header_plain = build_ios_header(identity, uid, token, ts)
     header_env, _, _ = build_envelope(session, header_plain, "observed", ts)
     # body 时间戳 = header ts + 1（原生两次独立读取毫秒）

@@ -94,9 +94,10 @@ def fetch_geo_fence(sess: Session) -> dict:
     return {"polygons": polygons, "run_area_id": run_area_id, "raw": raws}
 
 
-def fetch_points(sess: Session, lat: float, lon: float, run_area_id: int | None = None) -> list[dict]:
-    """拉取锚点附近实时打卡点（300s 服务端限流，勿频繁调用）。"""
-    start_ms = now_ms()
+def fetch_points(sess: Session, lat: float, lon: float, run_area_id: int | None = None,
+                 ts_ms: int | None = None) -> list[dict]:
+    """拉取锚点附近实时打卡点（300s 服务端限流，勿频繁调用）。ts_ms 可覆盖请求时间戳。"""
+    start_ms = ts_ms if ts_ms is not None else now_ms()
     runec_input = f"{sess.uid}{lon:.6f}{lat:.6f}{(start_ms // 1000) * 1000}"
     runec, _, _ = build_envelope(sess.envelope, runec_input, "observed", start_ms)
     body = {
@@ -114,6 +115,7 @@ def fetch_points(sess: Session, lat: float, lon: float, run_area_id: int | None 
         out = envelope_request(
             client, sess.envelope, sess.identity, "POST",
             HOST + POINTS_PATH, compact(body), uid=sess.uid, token=sess.token,
+            ts_ms=ts_ms,
         )
     biz = _normalize_data(check_business(out["business"]))
     pts = get_field(biz, "pointsResModels") or []
