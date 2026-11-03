@@ -8,8 +8,6 @@ import datetime as dt
 import json
 import math
 import random
-import time
-from pathlib import Path
 
 import matplotlib
 import numpy as np
@@ -33,8 +31,6 @@ FAKE_MS = int(dt.datetime.combine(dt.date.today(), dt.time(12, 0)).timestamp() *
 
 OUT_PNG = "fence_points.png"
 TRACK_PNG = "track_fit.png"
-POINTS_CACHE = Path(__file__).parent / "_points_cache.json"
-CACHE_TTL_S = 290
 
 # 轨迹目标：2.25km ±0.25km
 TRACK_DIST = 2250.0
@@ -76,10 +72,11 @@ def main() -> None:
         except RuntimeError as e:
             print(f"[scoring] 开启被拒绝: {e}")
 
-        # 指定锚点 + 假时间戳拉点位（带 300s 本地缓存防 10603 限流）
+        # 指定锚点 + 假时间戳，每次运行直连服务端拉实时点位
+        # 注意：接口限流约 5 分钟 3 次（10603），频繁运行会触发
         a_lat, a_lon = ANCHOR_LAT, ANCHOR_LON
         print(f"[points] 锚点 BD=({a_lat:.6f},{a_lon:.6f}) fake_ts=12:00")
-        pts = fetch_points_cached(sess, a_lat, a_lon, run_area_id)
+        pts = geo.fetch_points(sess, a_lat, a_lon, run_area_id, ts_ms=FAKE_MS)
         print(f"[points] {len(pts)} 个打卡点")
         for p in pts[:10]:
             xy = geo.point_xy(p)
@@ -114,10 +111,9 @@ def main() -> None:
         print(f"[plot] 已保存 {OUT_PNG}")
 
         # --- 轨迹拟合（体育场跑道：两直道 + 两半圆） ---
+        # 拟合输入固定为服务端实时下发的 5 个打卡点
         bd = geo.points_bd(pts)
-        fit_pts = scoring_pts if scoring_pts else bd
-        if scoring_pts:
-            print(f"[fit] 使用计分跑内嵌点位 {len(fit_pts)} 个（替代实时打卡点）")
+        fit_pts = bd
         stadium_idx = stadium_fence_index(polys, fit_pts)
         if stadium_idx is None:
             print("[stadium] 打卡点不在任何围栏内，无法确定跑步区域，跳过拟合")
@@ -201,31 +197,6 @@ def main() -> None:
         plt.show()
     finally:
         sess.logout()
-
-
-# ---------- 点位本地缓存（300s，对齐服务端限流） ----------
-
-def fetch_points_cached(sess, lat: float, lon: float, run_area_id) -> list[dict]:
-    key = f"{sess.uid}|{lat:.4f}|{lon:.4f}|{run_area_id}"
-    if POINTS_CACHE.exists():
-        try:
-            cache = json.loads(POINTS_CACHE.read_text(encoding="utf-8"))
-            ent = cache.get(key)
-            if ent and time.time() - ent["ts"] < CACHE_TTL_S:
-                print(f"[points] 本地缓存命中（{int(time.time() - ent['ts'])}s 前）")
-                return ent["points"]
-        except (json.JSONDecodeError, KeyError):
-            pass
-    pts = geo.fetch_points(sess, lat, lon, run_area_id, ts_ms=FAKE_MS)
-    cache = {}
-    if POINTS_CACHE.exists():
-        try:
-            cache = json.loads(POINTS_CACHE.read_text(encoding="utf-8"))
-        except json.JSONDecodeError:
-            cache = {}
-    cache[key] = {"ts": time.time(), "points": pts}
-    POINTS_CACHE.write_text(json.dumps(cache, ensure_ascii=False), encoding="utf-8")
-    return pts
 
 
 # ---------- Legacy 轨迹生成器（精简移植 src/track/generator.rs） ----------
