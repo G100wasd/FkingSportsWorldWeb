@@ -588,9 +588,8 @@ function renderDetail(d) {
     ].map(([k, v]) => ({ cells: [k, v] }));
     html += `<div class="detail-sec"><h4>提交体预览（save/record，未发送）</h4>` +
       `<div class="detail-scroll">` + tbl(["字段", "值"], rows) + `</div>` +
-      `<div class="mono" style="word-break:break-all;margin-top:6px">` +
-      `signature: ${esc(b.signature)}<br>` +
-      `originalSign: ${esc(String(b.originalSign).slice(0, 220))}…</div></div>`;
+      `<pre class="sign-block">signature: ${esc(b.signature)}\n` +
+      `originalSign: ${esc(String(b.originalSign))}</pre></div>`;
   }
 
   // ⑧ 公里圈（OBS laps_json 形态：每 1000m 一圈）

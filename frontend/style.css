@@ -131,6 +131,13 @@ body { display: flex; flex-direction: column; }
 .detail-sec tr.snap td { background: #fff5f5; color: #c53030; font-weight: 600; }
 .detail-scroll { max-height: 200px; overflow: auto; }
 #speed-chart { width: 100%; height: 120px; display: block; }
+.detail-sec .sign-block {
+  max-height: 110px; overflow: auto; margin: 6px 0 0;
+  background: #f7fafc; border: 1px solid #e2e8f0; border-radius: 6px;
+  padding: 6px 8px; font-size: 11px; line-height: 1.6;
+  font-family: Consolas, monospace; color: #4a5568;
+  white-space: pre-wrap; word-break: break-all;
+}
 #fit-detail pre {
   max-height: 260px; overflow: auto; margin: 6px 0 0;
   background: #1a202c; color: #a0aec0; border-radius: 6px;
