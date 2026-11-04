@@ -147,11 +147,25 @@ def api_fit():
         traceback.print_exc()
         raise HTTPException(502, f"拟合/轨迹生成失败: {e}")
     perim = fit["perimeter"] or 1.0
+    total_dis = float(locs[-1]["totalDis"]) if locs else 0.0
+    total_time = int(locs[-1]["totalTime"]) if locs else 0
     return {
         "track_bd": fit["track_bd"],
         "locs": [[q["gLat"], q["gLng"], int(q["totalDis"] // perim)]
                  for q in locs],
+        "locs_full": locs,
         "snap_idx": [i for i, q in enumerate(locs) if q.get("snapped")],
+        "summary": {
+            "distance_m": round(total_dis, 1),
+            "duration_s": total_time,
+            "pace_s_per_km": round(total_time / (total_dis / 1000.0), 1)
+                             if total_dis > 0 else None,
+            "avg_speed_mps": round(total_dis / total_time, 3)
+                             if total_time > 0 else None,
+            "point_count": len(locs),
+            "lap_count": int(total_dis // perim) + 1 if total_dis > 0 else 0,
+            "snapped": sum(1 for q in locs if q.get("snapped")),
+        },
         "fit": {
             "cx_bd": fit["cx_bd"], "angle_deg": fit["angle"] * 180 / 3.141592653589793,
             "straight": fit["straight"], "radius": fit["radius"],

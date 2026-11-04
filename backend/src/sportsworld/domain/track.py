@@ -82,10 +82,17 @@ def build_track(dist, dur, seed, points_bd, fence_ring=None, ring=None):
                 + wv_a2 * math.sin(math.tau * tt / wv_t2 + wv_p2))
 
     base = dist / dur_f
+    # 起步加速段 / 末段减速段：真实 GPS 轨迹两端的速度渐变
+    warmup = min(22.0, dur_f * 0.04)      # 起步 ~0-22s 线性加速
+    cooldown = min(16.0, dur_f * 0.03)    # 结束前 ~16s 线性减速
     w = []
     for tt in times:
-        ramp = (0.85 + 0.15 * (tt / max(1.0, min(8.0, dur_f / 20.0)))) if tt < 8.0 else 1.0
-        ramp = min(ramp, 1.0) * (1.0 + 0.03 * (tt - (dur_f - 8.0)) / 8.0 if tt > dur_f - 8.0 else 1.0)
+        if tt < warmup:
+            ramp = 0.30 + 0.70 * (tt / warmup)           # 静止起步 → 巡航
+        elif tt > dur_f - cooldown:
+            ramp = 0.40 + 0.60 * ((dur_f - tt) / cooldown)  # 巡航 → 停表
+        else:
+            ramp = 1.0
         km_done = (tt / dur_f) * dist / 1000.0
         fatigue = 1.03 if km_done <= 0.5 else max(0.80, 1.03 - 0.06 * (km_done - 0.5))
         wave = (1.0 + 0.010 * math.sin(math.tau * tt / 115.0 + phase_v)
