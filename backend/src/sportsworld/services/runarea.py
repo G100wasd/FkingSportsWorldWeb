@@ -52,7 +52,8 @@ def fetch_fences(sess) -> dict:
             "campus_id": raw.get("campusId"),
         })
     return {"polygons": polys, "areas": areas,
-            "run_area_id": fence["run_area_id"], "raws": fence["raw"]}
+            "run_area_id": fence["run_area_id"], "raws": fence["raw"],
+            "geo_fences": fence.get("geo_fences", [])}
 
 
 def pick_area(fence_bundle: dict, lat: float, lon: float, area_idx=None):
@@ -118,4 +119,8 @@ def fetch_area_points(sess, fence_bundle: dict, lat: float, lon: float,
         "points": pts,
         "points_bd": bd,
         "scoring": scoring,
+        # 五点 wrapper 元数据（wire.five_point_wrapper 用）
+        "meta_run_area_id": fence_bundle.get("run_area_id", -1),
+        "geo_fences": fence_bundle.get("geo_fences") or [],
+        "freedom_show_fence": bool(fence_bundle.get("geo_fences")),
     }

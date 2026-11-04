@@ -6,6 +6,7 @@
 """
 
 import datetime as dt
+import json
 import threading
 import traceback
 from pathlib import Path
@@ -200,6 +201,11 @@ def api_fit(body: FitBody):
     total_dis = float(locs[-1]["totalDis"]) if locs else 0.0
     total_time = int(locs[-1]["totalTime"]) if locs else 0
     speed_win, step_win = wire.submit_windows(trk)
+    five_point = wire.five_point_wrapper(
+        area["points"], trk,
+        run_area_id=area.get("meta_run_area_id", -1),
+        geo_fences=area.get("geo_fences") or [],
+        freedom_show_fence=area.get("freedom_show_fence", False))
     return {
         "track_bd": fit["track_bd"],
         "locs": [[q["gLat"], q["gLng"], int(q["totalDis"] // perim)]
@@ -212,6 +218,7 @@ def api_fit(body: FitBody):
         "speed_windows": speed_win,
         "step_windows": step_win,
         "laps": wire.build_laps(trk, trk["startTime"]),
+        "five_point": json.loads(five_point),
         "summary": {
             "distance_m": round(total_dis, 1),
             "duration_s": total_time,

@@ -70,8 +70,40 @@ def _normalize_data(biz: dict) -> dict:
     return biz
 
 
+def _normalize_fence(fence: dict) -> dict:
+    """围栏 -> wire 归一形态（移植 fence.rs::parse_response 的归一化）。
+
+    points[] 每个点补齐坐标全别名：lat/lng/lon=BD-09、glat/glng/glon=GCJ-02；
+    latitude/longitude 字段存在则同步 BD 值；runAreaId 归一为整数。
+    """
+    wire_pts = []
+    for p in fence.get("points", []):
+        xy = point_xy(p)
+        if not xy:
+            continue
+        lat, lon = xy
+        glat, glng = bd09_to_gcj02(lat, lon)
+        wp = dict(p)
+        wp.update({"lat": lat, "lng": lon, "lon": lon,
+                   "glat": glat, "glng": glng, "glon": glng})
+        if "latitude" in wp:
+            wp["latitude"] = lat
+        if "longitude" in wp:
+            wp["longitude"] = lon
+        wire_pts.append(wp)
+    f = dict(fence)
+    f["points"] = wire_pts
+    try:
+        rid = int(f.get("runAreaId"))
+        if rid >= 0:
+            f["runAreaId"] = rid
+    except (TypeError, ValueError):
+        pass
+    return f
+
+
 def fetch_geo_fence(sess: Session) -> dict:
-    """返回 {"polygons": [[(lat,lon),...], ...], "run_area_id": int}。"""
+    """返回 {"polygons", "run_area_id", "raw", "geo_fences"}。"""
     body = compact({"geoFenceUpdateTime": 0})
     with httpx.Client(timeout=30.0) as client:
         out = envelope_request(
@@ -86,12 +118,15 @@ def fetch_geo_fence(sess: Session) -> dict:
         run_area_id = -1
     polygons = []
     raws = []
+    geo_fences = []
     for fence in get_field(biz, "geoFences") or []:
         ring = [xy for p in fence.get("points", []) if (xy := point_xy(p))]
         if ring:
             polygons.append(ring)
         raws.append(fence)
-    return {"polygons": polygons, "run_area_id": run_area_id, "raw": raws}
+        geo_fences.append(_normalize_fence(fence))
+    return {"polygons": polygons, "run_area_id": run_area_id,
+            "raw": raws, "geo_fences": geo_fences}
 
 
 def fetch_points(sess: Session, lat: float, lon: float, run_area_id: int | None = None,

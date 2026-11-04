@@ -3,9 +3,15 @@
 build_windows: 10s 窗 OBS 版（id=(rrid%100000)*1000+窗口末秒，queueNum=0）
 submit_windows: 10s 窗提交版（id=60000+i，queueNum=i；指标同源）
 build_laps: 每 1000m 一圈（avgPace 秒/km、avgStride 厘米、末圈 isFullLap=false）
+five_point_*: 五点打卡回执（提交体 fivePointJson / OBS fixed_point_json 同源）
 """
 
+import json
 import math
+
+from ..services import geo   # wire.rs 同样跨层用 api::fence::point_xy
+
+MET_LAT = 111_132.0
 
 
 def _r0(x):
@@ -93,3 +99,69 @@ def build_laps(track, start_ms):
         })
         prev_d, prev_t, prev_steps, prev_gain = d_now, t_now, steps, gain
     return laps
+
+
+# ── 五点打卡回执（wire.rs::passes_point / five_point_*）──────────
+
+def passes_point(track, point, tol=40.0):
+    """轨迹是否在 tol 米内经过打卡点（BD-09，排除异常点 type=-1）。"""
+    cos_lat = 111_320.0 * math.cos(math.radians(point[0]))
+    for p in track["locations"]:
+        if p["type"] == -1:
+            continue
+        dy = (p["gLat"] - point[0]) * MET_LAT
+        dx = (p["gLng"] - point[1]) * cos_lat
+        if dx * dx + dy * dy <= tol * tol:
+            return True
+    return False
+
+
+def five_point_payload(points, track):
+    """逐点位回执对象（isPass 由轨迹判定；glat/glon 为 GCJ-02）。"""
+    out = []
+    for i, p in enumerate(points):
+        bd = geo.point_xy(p)
+        lat, lon = bd or (0.0, 0.0)
+        glat, glon = geo.bd09_to_gcj02(lat, lon) if bd else (0.0, 0.0)
+        out.append({
+            "flag": track["startTime"], "glat": glat, "glon": glon,
+            "id": p.get("id", i + 1),
+            "isFixed": p.get("isFixed", 0),
+            "isPass": passes_point(track, bd) if bd else False,
+            "lat": lat, "lon": lon,
+            "pointName": p.get("pointName") or "",
+            "position": p.get("position", 999),
+            "state": 0,
+        })
+    return out
+
+
+def five_point_wrapper(points, track, run_area_id=-1, geo_fences=None,
+                       freedom_show_fence=False):
+    """五点回执 JSON 字符串（内外双层编码；提交体与 OBS 复用同一份）。"""
+    _compact = dict(separators=(",", ":"), ensure_ascii=False)
+    outer = {
+        "useZip": False,
+        "fivePointJson": json.dumps(five_point_payload(points, track),
+                                    **_compact),
+        "runAreaId": run_area_id,
+        "geoFencesJson": json.dumps(geo_fences or [], **_compact),
+        "freedomShowFence": freedom_show_fence,
+    }
+    return json.dumps(outer, **_compact)
+
+
+def validate_five_point_wrapper(wrapper):
+    """提交前校验：五点数组非空、坐标非零（wire.rs 同语义）。"""
+    try:
+        outer = json.loads(wrapper)
+        pts = json.loads(outer["fivePointJson"])
+    except (TypeError, ValueError, KeyError) as e:
+        raise ValueError(f"五点轨迹 JSON 无效: {e}")
+    if not pts:
+        raise ValueError("五点轨迹不能为空")
+    for p in pts:
+        if (not p.get("lat") and not p.get("lon")) or \
+           (not p.get("glat") and not p.get("glon")):
+            raise ValueError("五点轨迹包含缺失坐标")
+    return True

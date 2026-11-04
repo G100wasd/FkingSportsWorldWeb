@@ -500,7 +500,8 @@ function renderDetail(d) {
   }
 
   // ③ 速度曲线（canvas）
-  html += `<div class="detail-sec"><h4>速度曲线（红点=打卡吸附点，灰线=圈界）</h4>` +
+  html += `<div class="detail-sec"><h4>速度曲线（蓝=段均速avgSpeed · 灰点=GPS瞬时 · ` +
+    `橙=海拔 · 红点=打卡 · 虚线=圈界）</h4>` +
     `<canvas id="speed-chart"></canvas></div>`;
 
   // ④ 逐点采样表（等距 ~40 行 + 全部吸附点）
@@ -513,6 +514,7 @@ function renderDetail(d) {
       rows.push({ snap: snap.has(i), cells: [
         i, fmtDur(q.totalTime || 0), (q.totalDis || 0).toFixed(1),
         q.steps ?? "-",
+        (q.avgSpeed ?? "-") === "-" ? "-" : (+q.avgSpeed).toFixed(2),
         (q.speed ?? "-") === "-" ? "-" : (+q.speed / 3.6).toFixed(2),
         (q.bdA ?? "-") === "-" ? "-" : (+q.bdA).toFixed(1),
         q.type ?? q.ptype ?? "-", snap.has(i) ? "●" : "",
@@ -520,7 +522,7 @@ function renderDetail(d) {
     }
     html += `<div class="detail-sec"><h4>逐点采样（每 ${step} 点 + 全部打卡点）</h4>` +
       `<div class="detail-scroll">` +
-      tbl(["#", "t", "里程m", "步数", "速度m/s", "海拔m", "类型", "打卡"], rows) +
+      tbl(["#", "t", "里程m", "步数", "均速m/s", "GPS速m/s", "海拔m", "类型", "打卡"], rows) +
       `</div></div>`;
   }
 
@@ -552,6 +554,23 @@ function renderDetail(d) {
       `</div></div>`;
   }
 
+  // ⑥.5 五点打卡回执（提交体 fivePointJson / OBS fixed_point_json 同源）
+  if (d.five_point) {
+    let pts = [];
+    try { pts = JSON.parse(d.five_point.fivePointJson || "[]"); } catch (e) {}
+    const pass = pts.filter(p => p.isPass).length;
+    const rows = pts.map((p, i) => ({ cells: [
+      i + 1, p.pointName || "-",
+      p.isPass ? '<b style="color:#38a169">✓ 经过</b>' : '<b style="color:#e53e3e">✗ 未过</b>',
+      p.isFixed ?? "-",
+      (+p.lat || 0).toFixed(6), (+p.lon || 0).toFixed(6),
+    ] }));
+    html += `<div class="detail-sec"><h4>五点打卡回执（${pass}/${pts.length} 通过｜` +
+      `runAreaId=${d.five_point.runAreaId}｜围栏${d.five_point.freedomShowFence ? "有" : "无"}）</h4>` +
+      tbl(["#", "点名", "isPass", "isFixed", "lat(BD)", "lon(BD)"], rows) +
+      `</div>`;
+  }
+
   // ⑦ 公里圈（OBS laps_json 形态：每 1000m 一圈）
   if (Array.isArray(d.laps) && d.laps.length) {
     const rows = d.laps.map(l => ({ cells: [
@@ -576,7 +595,8 @@ function renderDetail(d) {
   drawSpeedChart(full, snap, d.locs);
 }
 
-// 速度曲线：横轴=轨迹点序，纵轴=瞬时速度；灰竖线=圈界，红点=打卡点
+// 速度曲线：蓝线=avgSpeed段均速（平滑画像），灰点=speed GPS瞬时速（km/h→m/s，
+// 20% 丢包为 0 是协议真实行为）；橙=海拔，灰竖线=圈界，红点=打卡点
 function drawSpeedChart(full, snap, locs) {
   const cv = $("speed-chart");
   if (!cv || !full.length) return;
@@ -585,8 +605,9 @@ function drawSpeedChart(full, snap, locs) {
   cv.width = W * dpr; cv.height = H * dpr;
   const ctx = cv.getContext("2d");
   ctx.scale(dpr, dpr);
-  const speeds = full.map(q => (+q.speed || 0) / 3.6);   // speed 字段是 km/h，转 m/s
-  const vmax = Math.max(...speeds, 0.1), vmin = Math.min(...speeds);
+  const avgs = full.map(q => +q.avgSpeed || 0);            // m/s，段均速
+  const gpss = full.map(q => (+q.speed || 0) / 3.6);       // km/h → m/s
+  const vmax = Math.max(...avgs, 0.1), vmin = Math.min(...avgs);
   const X = i => pad + i * (W - 2 * pad) / (full.length - 1);
   const Y = v => H - pad - (v - vmin) * (H - 2 * pad) / (vmax - vmin || 1);
   // 圈界竖线
@@ -609,14 +630,17 @@ function drawSpeedChart(full, snap, locs) {
   alts.forEach((v, i) => i ? ctx.lineTo(X(i), YA(v)) : ctx.moveTo(X(i), YA(v)));
   ctx.stroke();
   ctx.globalAlpha = 1;
-  // 速度折线
+  // GPS 瞬时速：灰色散点（协议噪声：20% 丢包 + ±8% 抖动）
+  ctx.fillStyle = "rgba(160,174,192,0.55)";
+  gpss.forEach((v, i) => { ctx.beginPath(); ctx.arc(X(i), Y(v), 1.4, 0, 7); ctx.fill(); });
+  // 段均速折线（画像本体）
   ctx.strokeStyle = "#3182ce"; ctx.lineWidth = 1.2; ctx.beginPath();
-  speeds.forEach((v, i) => i ? ctx.lineTo(X(i), Y(v)) : ctx.moveTo(X(i), Y(v)));
+  avgs.forEach((v, i) => i ? ctx.lineTo(X(i), Y(v)) : ctx.moveTo(X(i), Y(v)));
   ctx.stroke();
   // 打卡点标记
   ctx.fillStyle = "#e53e3e";
   snap.forEach(i => {
-    if (i < speeds.length) { ctx.beginPath(); ctx.arc(X(i), Y(speeds[i]), 3, 0, 7); ctx.fill(); }
+    if (i < avgs.length) { ctx.beginPath(); ctx.arc(X(i), Y(avgs[i]), 3, 0, 7); ctx.fill(); }
   });
   // 纵轴范围标注
   ctx.fillStyle = "#a0aec0"; ctx.font = "10px sans-serif";
