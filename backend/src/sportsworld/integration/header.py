@@ -20,10 +20,13 @@ def token_sign(uid: int, token: str, ts_ms: int) -> str:
     return md5_hex((query + TOKEN_SIGN_SUFFIX).encode("utf-8"))
 
 
-def build_ios_header(identity: dict, uid: int, token: str, ts_ms: int) -> str:
-    """iOS 请求头明文（_fillFullHeaders 字段序）。uid<1/无 token 时省略对应字段。"""
+def build_ios_header(identity: dict, uid: int, token: str,
+                     ts_ms: int) -> tuple[str, dict]:
+    """iOS 请求头明文（_fillFullHeaders 字段序）。uid<1/无 token 时省略对应字段。
+    返回 (紧凑JSON, 附加HTTP头: nonce/timeStamp/tokenSign)。"""
     device_id = identity.get("device_id") or str(uuid.uuid4()).upper()
     install = identity.get("app_install_time") or ts_ms - 3 * 86_400_000
+    nonce = str(uuid.uuid4()).upper()
     m: dict = {
         "osType": "1",
         "DeviceId": device_id,
@@ -40,7 +43,7 @@ def build_ios_header(identity: dict, uid: int, token: str, ts_ms: int) -> str:
         "appVersion": IOS_APP_VERSION,
         "isRoot": False,
         "appInstallTime": install,
-        "nonce": str(uuid.uuid4()).upper(),
+        "nonce": nonce,
     })
     if uid >= 1:
         m["uid"] = uid
@@ -48,9 +51,11 @@ def build_ios_header(identity: dict, uid: int, token: str, ts_ms: int) -> str:
         m["token"] = token
     m["timeStamp"] = ts_ms
     m["studentId"] = uid if uid >= 1 else 0
+    sign = token_sign(uid, token, ts_ms)
     if uid >= 1 and token:
-        m["tokenSign"] = token_sign(uid, token, ts_ms)
-    return compact(m)
+        m["tokenSign"] = sign
+    return compact(m), {"nonce": nonce, "timeStamp": str(ts_ms),
+                        "tokenSign": sign}
 
 
 def build_android_header(identity: dict, uid: int, token: str,
@@ -99,4 +104,4 @@ def build_header(identity: dict, uid: int, token: str,
     """按 identity["platform"] 选择头形态；统一返回 (明文, extras)。"""
     if (identity or {}).get("platform") == "android":
         return build_android_header(identity, uid, token, ts_ms)
-    return build_ios_header(identity, uid, token, ts_ms), {}
+    return build_ios_header(identity, uid, token, ts_ms)

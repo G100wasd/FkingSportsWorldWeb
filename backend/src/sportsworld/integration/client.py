@@ -36,14 +36,16 @@ def envelope_request(
     token: str = "",
     extra_headers: dict | None = None,
     ts_ms: int | None = None,
+    include_extras: bool = False,
 ) -> dict:
     """发送信封请求，返回 {http_status, business, raw}。
 
-    ts_ms 覆盖请求时间戳（header/container 共用）；None 取当前时间。"""
+    ts_ms 覆盖请求时间戳（header/container 共用）；None 取当前时间。
+    include_extras=True 时把头的 nonce/timeStamp/tokenSign 也作为
+    HTTP 头发送（仅 save/record 提交需要）。"""
     ts = ts_ms if ts_ms is not None else now_ms()
     platform = (identity or {}).get("platform", "ios")
-    # 普通调用丢弃 extras（nonce/timeStamp/tokenSign 仅 save/record 随头发送）
-    header_plain, _extras = build_header(identity, uid, token, ts)
+    header_plain, extras = build_header(identity, uid, token, ts)
     header_env, _, _ = build_envelope(session, header_plain, "observed", ts)
     # body 时间戳 = header ts + 1（原生两次独立读取毫秒）
     body_env, kd, _ = build_envelope(session, body_plain, "insert", ts + 1)
@@ -54,6 +56,8 @@ def envelope_request(
         "appVersion": IOS_APP_VERSION,   # HTTP 层恒 7.3.40（与 Rust 一致）
         "headerSign": header_env,
     }
+    if include_extras:
+        headers.update(extras)
     headers.update(extra_headers or {})
     resp = _send_with_retry(client, method, url, headers, body_env)
     raw = resp.content

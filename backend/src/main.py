@@ -46,6 +46,19 @@ def _save_anchor(username: str, lat: float, lon: float):
     cfg_save(cfg)
 
 
+def _receipt_for(run_uuid: str):
+    """本地提交回执（WAL）：uuid -> {rrid, ts, username}。防重复提交。"""
+    return (cfg_load().get("receipts") or {}).get(run_uuid)
+
+
+def _save_receipt(run_uuid: str, rrid: int):
+    cfg = cfg_load()
+    cfg.setdefault("receipts", {})[run_uuid] = {
+        "rrid": rrid, "username": _username,
+        "ts": int(dt.datetime.now().timestamp() * 1000)}
+    cfg_save(cfg)
+
+
 class LoginBody(BaseModel):
     username: str
     password: str
@@ -126,10 +139,11 @@ def api_login(body: LoginBody):
 
 @app.post("/api/logout")
 def api_logout():
-    global _session, _username
+    global _session, _username, _last_fit
     with _lock:
         sess, _session = _session, None
         _username = ""
+        _last_fit = None
     if sess is not None:
         sess.logout()
     return _sess_info(None)
@@ -138,15 +152,17 @@ def api_logout():
 _last_fences = None  # 最近一次拉取的围栏数据（限流外，复用于拉点）
 _last_area = None    # 最近一次拉取的跑步区域（供 /api/fit 复用，避免重复拉点）
 _last_anchor = None  # 最近一次取点的锚点 (lat, lon) = 前端提交的 GCJ-02 原值
+_last_fit = None     # 最近一次拟合的提交载荷 {body, run_uuid, policy_ts, username}
 
 
 @app.post("/api/points")
 def api_points(body: AnchorBody):
     """按锚点拉实时打卡点：后台自动完成 围栏 -> 计分跑申请 -> 取点。"""
-    global _last_fences, _last_area, _last_anchor
+    global _last_fences, _last_area, _last_anchor, _last_fit
     if _session is None:
         raise HTTPException(401, "请先登录")
     _last_anchor = (body.lat, body.lon)
+    _last_fit = None          # 新点位使旧拟合作废，防止误提交过期数据
     if _last_fences is None:
         try:
             _last_fences = runarea.fetch_fences(_session)
@@ -179,6 +195,7 @@ def api_points(body: AnchorBody):
 @app.post("/api/fit")
 def api_fit(body: FitBody):
     """阶段二：对暂存的打卡点做体育场拟合 + 轨迹生成（纯本地，不触发限流）。"""
+    global _last_fit
     if _session is None:
         raise HTTPException(401, "请先登录")
     if _last_area is None:
@@ -221,6 +238,10 @@ def api_fit(body: FitBody):
         face_check=_RUN.get("face_check", 0),
         five_point_json=five_point,
         address=_RUN.get("address", ""))
+    # 提交载荷整份暂存：/api/submit 必须原样重放同一 uuid/body（runef 依赖）
+    _last_fit = {"body": record_body, "run_uuid": run_uuid,
+                 "policy_ts": scoring.get("policy_ts") or "",
+                 "username": _username}
     return {
         "track_bd": fit["track_bd"],
         "locs": [[q["gLat"], q["gLng"], int(q["totalDis"] // perim)]
@@ -264,7 +285,37 @@ def api_fit(body: FitBody):
             "fence_margin": fit["fence_margin"], "converged": fit["converged"],
             "alt_solutions": fit["alt_solutions"],
         },
+        "submitted": bool(_receipt_for(run_uuid)),
     }
+
+
+@app.post("/api/submit")
+def api_submit():
+    """提交最近一次拟合的记录：save/record 双层信封 POST -> rrid -> 本地回执。"""
+    if _session is None:
+        raise HTTPException(401, "请先登录")
+    if _last_fit is None:
+        raise HTTPException(409, "请先拟合轨迹")
+    if _last_fit["username"] != _username:
+        raise HTTPException(409, "拟合数据属于其他账号，请重新拟合")
+    run_uuid = _last_fit["run_uuid"]
+    old = _receipt_for(run_uuid)
+    if old:
+        return {"rrid": old["rrid"], "uuid": run_uuid, "already": True}
+    try:
+        result = submit.submit_record(
+            _session, _last_fit["body"], run_uuid,
+            _last_fit["policy_ts"])
+    except submit.SubmitRejected as e:
+        raise HTTPException(502, str(e))
+    except submit.SubmitError as e:
+        raise HTTPException(502, f"{e}（结果未知，本地已记日志，请勿盲目重试）")
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(502, f"提交失败: {e}")
+    _save_receipt(run_uuid, result["rrid"])
+    return {"rrid": result["rrid"], "uuid": run_uuid, "already": False,
+            "complete": result.get("complete")}
 
 
 @app.on_event("shutdown")

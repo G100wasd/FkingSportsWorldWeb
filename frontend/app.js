@@ -428,7 +428,13 @@ function renderFit(d, retried) {
   // 详细数据：完整展示本次生成的所有字段（含 locs_full 逐点记录）
   $("fit-detail-json").textContent = JSON.stringify(d, null, 1);
   $("submit-card").style.display = "";
-  $("btn-submit").disabled = !d.locs.length;
+  if (d.submitted) {
+    $("btn-submit").disabled = true;
+    $("btn-submit").textContent = "✓ 已提交";
+  } else {
+    $("btn-submit").disabled = !d.locs.length;
+    $("btn-submit").textContent = "提交记录";
+  }
   $("runarea-info").innerHTML =
     (retried ? `<span style="color:#b7791f">重新拉点后拟合成功：</span><br>` : "") +
     `直道 ${f.straight.toFixed(0)}m + 半圆 r=${f.radius.toFixed(0)}m | 周长 ${f.perimeter.toFixed(0)}m | 轨迹 ${d.locs.length} 点<br>` +
@@ -952,10 +958,23 @@ async function doFit() {
 
 $("btn-points").onclick = fetchPoints;
 $("btn-fit").onclick = doFit;
-$("btn-submit").onclick = () => {
-  $("runarea-info").innerHTML =
-    `<span style="color:#b7791f">提交功能尚未实现：跑步记录提交协议` +
-    `（轨迹字段/签名/OBS 上传）仍在逆向中。</span>`;
+$("btn-submit").onclick = async () => {
+  if (!lastFit || !lastFit.locs || !lastFit.locs.length) return;
+  $("btn-submit").disabled = true;
+  $("btn-submit").textContent = "提交中…";
+  try {
+    const r = await api("/api/submit", {});
+    $("btn-submit").textContent = "✓ 已提交";
+    $("runarea-info").innerHTML =
+      `<span style="color:#38a169">` +
+      `${r.already ? "该轨迹此前已提交过：" : "√ 提交成功 "}` +
+      `rrid=${r.rrid} uuid=${r.uuid}</span>`;
+  } catch (e) {
+    $("btn-submit").disabled = false;
+    $("btn-submit").textContent = "提交记录";
+    $("runarea-info").innerHTML =
+      `<span style="color:#e53e3e">提交失败：${esc(e.message)}</span>`;
+  }
 };
 
 /* ---------- 卡片折叠 ---------- */
