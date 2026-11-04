@@ -146,9 +146,11 @@ def api_fit():
     except Exception as e:
         traceback.print_exc()
         raise HTTPException(502, f"拟合/轨迹生成失败: {e}")
+    perim = fit["perimeter"] or 1.0
     return {
         "track_bd": fit["track_bd"],
-        "locs": [[q["gLat"], q["gLng"]] for q in locs],
+        "locs": [[q["gLat"], q["gLng"], int(q["totalDis"] // perim)]
+                 for q in locs],
         "snap_idx": [i for i, q in enumerate(locs) if q.get("snapped")],
         "fit": {
             "cx_bd": fit["cx_bd"], "angle_deg": fit["angle"] * 180 / 3.141592653589793,
