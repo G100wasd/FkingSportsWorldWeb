@@ -5,6 +5,7 @@
 然后浏览器访问 http://127.0.0.1:8000
 """
 
+import datetime as dt
 import threading
 import traceback
 from pathlib import Path
@@ -124,8 +125,12 @@ def api_points(body: PointsBody):
             traceback.print_exc()
             raise HTTPException(502, f"拉取围栏失败: {e}")
     try:
+        # 与 _fence_test 一致：假 12:00 时间戳 + 顶层 runAreaId
+        fake_ms = int(dt.datetime.combine(
+            dt.date.today(), dt.time(12, 0)).timestamp() * 1000)
         _last_area = runarea.fetch_area_points(
-            _session, _last_fences, body.lat, body.lon, area_idx=body.area_idx)
+            _session, _last_fences, body.lat, body.lon,
+            area_idx=body.area_idx, ts_ms=fake_ms)
     except Exception as e:
         traceback.print_exc()
         raise HTTPException(502, f"拉取打卡点失败: {e}")
@@ -142,6 +147,7 @@ def api_points(body: PointsBody):
                     "lat": p.get("lat"), "lon": p.get("lon")}
                    for p in area["points"]],
         "points_bd": area["points_bd"],
+        "scoring": area["scoring"],
     }
 
 

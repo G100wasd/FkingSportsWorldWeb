@@ -6,7 +6,7 @@
 """
 
 from ..domain.geom import in_ring, stadium_fence_index
-from . import geo
+from . import geo, policy
 
 
 def _to_int(v, default=-1):
@@ -75,9 +75,27 @@ def pick_area(fence_bundle: dict, lat: float, lon: float, area_idx=None):
 
 def fetch_area_points(sess, fence_bundle: dict, lat: float, lon: float,
                       area_idx=None, ts_ms: int | None = None) -> dict:
-    """拉指定/锚点所在区域的实时打卡点（服务端限流 ~5分钟3次）。"""
+    """拉指定/锚点所在区域的实时打卡点（服务端限流 ~5分钟3次）。
+
+    与 _fence_test 顺序一致：先 runModePolicy(1) 申请计分跑（可能激活
+    场地跑会话，影响点位池），失败容忍后再拉点位。
+    """
     polys = fence_bundle["polygons"]
     area_idx, rid = pick_area(fence_bundle, lat, lon, area_idx)
+
+    scoring = None
+    try:
+        biz = policy.fetch_policy(sess, run_mode=1, ts_ms=ts_ms)
+        summ = policy.policy_summary(biz)
+        scoring = {"ok": True, "minDistance": summ["minDistance"],
+                   "validTime": summ["validTime"], "policy": summ["policy"],
+                   "must_points": summ["must_points"]}
+        print(f"[scoring] 开启成功 minDistance={summ['minDistance']} "
+              f"policy={summ['policy']} must={len(summ['must_points'])}")
+    except RuntimeError as e:
+        scoring = {"ok": False, "error": str(e)}
+        print(f"[scoring] 开启被拒绝: {e}")
+
     pts = geo.fetch_points(sess, lat, lon, rid, ts_ms=ts_ms)
     bd = geo.points_bd(pts)
     if not bd:
@@ -99,4 +117,5 @@ def fetch_area_points(sess, fence_bundle: dict, lat: float, lon: float,
         "ref_center": _ring_center(ring),
         "points": pts,
         "points_bd": bd,
+        "scoring": scoring,
     }

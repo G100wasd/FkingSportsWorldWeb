@@ -115,7 +115,14 @@
 
   <div id="panel">
     <div class="card">
-      <h3>定位（BD-09 坐标）</h3>
+      <h3>定位坐标</h3>
+      <div class="row">
+        <label>坐标系</label>
+        <select id="inp-crs" style="flex:1;padding:7px 10px;border:1px solid #cbd5e0;border-radius:6px;font-size:13px;">
+          <option value="bd09">BD-09（服务端）</option>
+          <option value="gcj02">GCJ-02（高德/拾取器）</option>
+        </select>
+      </div>
       <div class="row">
         <label>纬度 lat</label>
         <input id="inp-lat" placeholder="22.9058142" value="22.9058142">
@@ -123,6 +130,11 @@
       <div class="row">
         <label>经度 lon</label>
         <input id="inp-lon" placeholder="113.8709786" value="113.8709786">
+      </div>
+      <div class="hint" style="margin-top:-4px;margin-bottom:8px;">
+        同一坐标在 BD-09 / GCJ-02 下相差约 700m；切换坐标系会就地换算数值，锚点物理位置不变。<br>
+        锚点放校园围栏<strong>外</strong>（如西侧）才会下发田径场点位；
+        放在校内命中的是校园跑区域。
       </div>
       <div class="btn-row">
         <button id="btn-geoloc">本机定位</button>
@@ -193,13 +205,33 @@ function gcj02ToBd09(lat, lon) {
   return [z * Math.sin(t) + 0.006, z * Math.cos(t) + 0.0065];   // [lat, lon]
 }
 
-/* ---------- 定位输入框 ---------- */
+/* ---------- 定位输入框：始终按所选坐标系显示，内部统一 BD-09 ---------- */
 
+let lastCrs = "bd09";
+// 切换坐标系：就地换算输入框数值，物理锚点不变
+$("inp-crs").addEventListener("change", () => {
+  const lat = parseFloat($("inp-lat").value), lon = parseFloat($("inp-lon").value);
+  if (isFinite(lat) && isFinite(lon)) {
+    const bd = lastCrs === "gcj02" ? gcj02ToBd09(lat, lon) : [lat, lon];
+    const [la, lo] = crs() === "gcj02" ? bd09ToGcj02(bd[0], bd[1]) : bd;
+    $("inp-lat").value = la.toFixed(7);
+    $("inp-lon").value = lo.toFixed(7);
+  }
+  lastCrs = crs();
+});
+function crs() { return $("inp-crs").value; }
+
+// 输入框 -> BD-09；写回时按所选坐标系显示
 function readInputs() {
   const lat = parseFloat($("inp-lat").value);
   const lon = parseFloat($("inp-lon").value);
   if (!isFinite(lat) || !isFinite(lon)) return null;
-  return [lat, lon];
+  return crs() === "gcj02" ? gcj02ToBd09(lat, lon) : [lat, lon];
+}
+function writeInputs(bdLat, bdLon) {
+  const [la, lo] = crs() === "gcj02" ? bd09ToGcj02(bdLat, bdLon) : [bdLat, bdLon];
+  $("inp-lat").value = la.toFixed(7);
+  $("inp-lon").value = lo.toFixed(7);
 }
 
 function bdToLngLat(bdLat, bdLon) {
@@ -254,8 +286,7 @@ function onMapClick(e) {
   if (!picking) return;
   const gLat = e.lnglat.getLat(), gLon = e.lnglat.getLng();
   const [bLat, bLon] = gcj02ToBd09(gLat, gLon);
-  $("inp-lat").value = bLat.toFixed(7);
-  $("inp-lon").value = bLon.toFixed(7);
+  writeInputs(bLat, bLon);
   map.setCenter(setMarkerAtBd(bLat, bLon, "选点"));
   togglePick(false);
 }
@@ -269,8 +300,7 @@ function locateMe(AMap) {
     if (status === "complete") {
       const gLat = result.position.lat, gLon = result.position.lng;
       const [bLat, bLon] = gcj02ToBd09(gLat, gLon);
-      $("inp-lat").value = bLat.toFixed(7);
-      $("inp-lon").value = bLon.toFixed(7);
+      writeInputs(bLat, bLon);
       map.setCenter(setMarkerAtBd(bLat, bLon, "本机定位"));
     } else {
       navigator.geolocation?.getCurrentPosition(
@@ -279,8 +309,7 @@ function locateMe(AMap) {
           AMap.convertFrom(ll, "gps", (st, res) => {
             const g = (st === "ok" && res.locations[0]) ? res.locations[0] : ll;
             const [bLat, bLon] = gcj02ToBd09(g.lat, g.lng);
-            $("inp-lat").value = bLat.toFixed(7);
-            $("inp-lon").value = bLon.toFixed(7);
+            writeInputs(bLat, bLon);
             map.setCenter(setMarkerAtBd(bLat, bLon, "GPS定位"));
           });
         },
@@ -435,7 +464,12 @@ async function fetchPoints() {
             strokeColor: "#2c7a7b", strokeWeight: 2 }
         : (f.idx === selAreaIdx ? FENCE_SEL_STYLE : FENCE_STYLE)));
     $("btn-fit").disabled = false;
+    const sc = d.scoring;
+    const scTxt = sc && sc.ok
+      ? `计分跑已开启（minDistance=${sc.minDistance}）`
+      : `计分跑被拒（${(sc && sc.error) || "?"}）`;
     $("runarea-info").innerHTML =
+      `${scTxt}<br>` +
       `区域 <b>${d.area_name}</b>（runAreaId=${d.run_area_id}）下发 ${d.points.length} 个打卡点：<br>` +
       d.points.map((p, i) => `${i + 1}. ${p.name || ""}`).join("　");
   } catch (e) {
