@@ -61,6 +61,27 @@
     </div>
 
     <div class="card">
+      <h3>跑步配置</h3>
+      <div class="row">
+        <label>伪装时间</label>
+        <input id="cfg-start" placeholder="HH:MM（默认 15:30±1~5分）">
+      </div>
+      <div class="row">
+        <label>跑步距离 m</label>
+        <input id="cfg-dist" value="2200">
+      </div>
+      <div class="row">
+        <label>均速 m/s</label>
+        <input id="cfg-speed" placeholder="自动（与用时联动）">
+      </div>
+      <div class="row">
+        <label>用时 mm:ss</label>
+        <input id="cfg-dur" placeholder="自动（与均速联动）">
+      </div>
+      <div class="hint" id="cfg-hint"></div>
+    </div>
+
+    <div class="card">
       <h3>跑步区域</h3>
       <div class="btn-row">
         <button id="btn-points">获取打卡点</button>

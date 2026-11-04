@@ -44,9 +44,10 @@ class AnchorBody(BaseModel):
 
 
 class FitBody(BaseModel):
-    """拟合目标：距离（米）+ 用时（秒），暂用固定默认值，后续开放配置。"""
-    dist: float = 2000.0
+    """拟合目标：距离（米）+ 用时（秒）+ 伪装起跑时刻（毫秒时间戳）。"""
+    dist: float = 2200.0
     dur: int = 720
+    start_ms: int = 0   # 0 = 未提供
 
 
 def _sess_info(sess):
@@ -168,6 +169,7 @@ def api_fit(body: FitBody):
         "summary": {
             "distance_m": round(total_dis, 1),
             "duration_s": total_time,
+            "start_ms": body.start_ms or None,
             "pace_s_per_km": round(total_time / (total_dis / 1000.0), 1)
                              if total_dis > 0 else None,
             "avg_speed_mps": round(total_dis / total_time, 3)

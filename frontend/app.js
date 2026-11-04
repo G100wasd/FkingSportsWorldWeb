@@ -165,6 +165,97 @@ $("btn-goto").onclick = () => {
 $("inp-lat").addEventListener("input", syncMarkerFromInputs);
 $("inp-lon").addEventListener("input", syncMarkerFromInputs);
 
+/* ---------- 跑步配置：伪装时间 / 距离 / 均速↔用时联动 ---------- */
+
+const CFG_DEFAULT_DIST = 2200, CFG_DEFAULT_DUR = 720;
+const CFG_START_LO = 6, CFG_START_HI = 22;   // 伪装时间许可窗口 06:00–22:00
+
+function cfgDist() {
+  const v = parseFloat($("cfg-dist").value);
+  return isFinite(v) && v > 0 ? v : CFG_DEFAULT_DIST;
+}
+function cfgSpeed() {
+  const v = parseFloat($("cfg-speed").value);
+  return isFinite(v) && v > 0 ? v : null;
+}
+function cfgDur() {
+  const raw = ($("cfg-dur").value || "").trim()
+                .replace(/[：∶]/g, ":");   // 全角冒号归一
+  const m = raw.match(/^(?:(\d+):)?([0-5]?\d):([0-5]\d)$/) || raw.match(/^(\d+):([0-5]?\d)$/);
+  if (m) return m.length === 4 ? (+m[1]) * 3600 + (+m[2]) * 60 + (+m[3])
+                              : (+m[1]) * 60 + (+m[2]);
+  const v = parseFloat(raw);
+  return isFinite(v) && v > 0 ? Math.round(v) : null;
+}
+// 有效用时：显式用时 > 均速推导 > 默认 720s
+function cfgEffDur() {
+  const d = cfgDur(), sp = cfgSpeed();
+  return d || (sp ? Math.round(cfgDist() / sp) : CFG_DEFAULT_DUR);
+}
+
+// 联动：改距离/均速 -> 重算用时；改用时 -> 重算均速
+$("cfg-dist").addEventListener("input", () => {
+  const sp = cfgSpeed();
+  if (sp) $("cfg-dur").value = fmtDur(cfgDist() / sp);
+  updateCfgHint();
+});
+$("cfg-speed").addEventListener("input", () => {
+  const sp = cfgSpeed();
+  if (sp) $("cfg-dur").value = fmtDur(cfgDist() / sp);
+  updateCfgHint();
+});
+$("cfg-dur").addEventListener("input", () => {
+  const d = cfgDur();
+  if (d) $("cfg-speed").value = (cfgDist() / d).toFixed(2);
+  updateCfgHint();
+});
+$("cfg-start").addEventListener("input", () => {
+  startMsCache = null;   // 输入变了才重抽随机偏移
+  updateCfgHint();
+});
+
+// 伪装起跑：HH:MM 且在 06:00–22:00 内 -> 用该时刻；否则默认 15:30±[1,5]min。
+// 起跑+用时须早于现在，否则回退到昨天。
+let startMsCache = null;
+function resolveStartMs() {
+  if (startMsCache == null) startMsCache = computeStartMs();
+  return startMsCache;
+}
+function computeStartMs() {
+  const raw = ($("cfg-start").value || "").trim()
+                .replace(/[：∶]/g, ":");   // 全角冒号归一
+  const durMs = cfgEffDur() * 1000 + 60000;
+  const m = raw.match(/^([01]?\d|2[0-3]):([0-5]\d)$/);
+  let ms;
+  if (m && +m[1] >= CFG_START_LO && +m[1] < CFG_START_HI) {
+    const d = new Date();
+    d.setHours(+m[1], +m[2], Math.floor(Math.random() * 60), 0);
+    ms = d.getTime();
+  } else {
+    const jitter = (1 + Math.floor(Math.random() * 5)) * (Math.random() < .5 ? -1 : 1);
+    const d = new Date();
+    d.setHours(15, 30 + jitter, Math.floor(Math.random() * 60), 0);
+    ms = d.getTime();
+  }
+  if (ms + durMs > Date.now()) ms -= 86400000;
+  return ms;
+}
+
+function updateCfgHint() {
+  const ms = resolveStartMs(), d = new Date(ms);
+  const p = n => String(n).padStart(2, "0");
+  const sameDay = new Date().toDateString() === d.toDateString();
+  $("cfg-hint").textContent =
+    `起跑：${sameDay ? "今天" : "昨天"} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}` +
+    ` ｜ ${cfgDist().toFixed(0)}m · ${fmtDur(cfgEffDur())} · ` +
+    `${(cfgDist() / cfgEffDur()).toFixed(2)} m/s`;
+}
+updateCfgHint();
+
+function fitGoal() {
+  return { dist: cfgDist(), dur: cfgEffDur(), start_ms: resolveStartMs() };
+}
+
 /* ---------- 跑步区域：① 拉点 -> ② 拟合 ---------- */
 
 function clearOverlays() {
@@ -426,6 +517,12 @@ function renderSummary(sum, adjustedMeters) {
   if (!sum) return;
   const dist = adjustedMeters != null ? adjustedMeters : sum.distance_m;
   const adj = adjustedMeters != null ? "~" : "";
+  let startChip = "";
+  if (sum.start_ms) {
+    const d = new Date(sum.start_ms);
+    const p = n => String(n).padStart(2, "0");
+    startChip = `<div class="kv">起跑<b>${p(d.getHours())}:${p(d.getMinutes())}</b></div>`;
+  }
   $("fit-summary").innerHTML =
     `<div class="kv">距离<b>${adj}${(dist / 1000).toFixed(2)} km</b></div>` +
     `<div class="kv">用时<b>${fmtDur(sum.duration_s)}</b></div>` +
@@ -433,7 +530,7 @@ function renderSummary(sum, adjustedMeters) {
     `<div class="kv">均速<b>${sum.avg_speed_mps} m/s</b></div>` +
     `<div class="kv">轨迹点<b>${sum.point_count}</b></div>` +
     `<div class="kv">圈数<b>${sum.lap_count}</b></div>` +
-    `<div class="kv">打卡锚点<b>${sum.snapped}</b></div>`;
+    `<div class="kv">打卡锚点<b>${sum.snapped}</b></div>` + startChip;
 }
 
 /* ---------- 轨迹手动调整：控制点=次级打卡点 ----------
@@ -662,7 +759,7 @@ async function refetchAndRefit(prevErr, attempt) {
     $("submit-card").style.display = "none";
     drawPoints(d);
     try {
-      renderFit(await api("/api/fit"), true);
+      renderFit(await api("/api/fit", fitGoal()), true);
     } catch (e2) {
       if (e2.message.includes("无可行解") && attempt < MAX_REFIT)
         return await refetchAndRefit(e2.message, attempt + 1);
@@ -678,7 +775,7 @@ async function doFit() {
   $("btn-fit").disabled = true;
   $("runarea-info").textContent = "拟合体育场跑道并生成轨迹中…";
   try {
-    renderFit(await api("/api/fit"));
+    renderFit(await api("/api/fit", fitGoal()));
   } catch (e) {
     console.error(e);
     if (e.message.includes("无可行解")) await refetchAndRefit(e.message, 1);
