@@ -1,0 +1,46 @@
+{
+  "server": {
+    "host": "https://run.gxapp.iydsj.com",
+    "listen_port": 8000
+  },
+  "account": {
+    "username": "",
+    "password": ""
+  },
+  "run": {
+    "default_dist": 2200,
+    "default_dur": 720,
+    "default_start": "15:30",
+    "start_jitter_min": [1, 5],
+    "start_window": [6, 22]
+  },
+  "track": {
+    "speed_floor": 1.90,
+    "speed_ceil": 6.30,
+    "max_drift": 2.5,
+    "lateral_a1": [0.35, 0.8],
+    "lateral_a2": [0.10, 0.3],
+    "ar1_sigma": 0.35,
+    "warmup_s": 22,
+    "cooldown_s": 16,
+    "dt_main_p": 0.80,
+    "dt_main": 5.0,
+    "dt_others": [1, 2, 3, 4, 6, 7, 8],
+    "ptype_cum": [0.39, 0.93, 0.96],
+    "radius_typ3": [1.4, 3.0],
+    "radius_normal": [1.2, 2.0],
+    "radius_drift": [1.6, 5.0],
+    "snap_tolerance_m": 40
+  },
+  "frontend": {
+    "amap_key": "712078f920fec121063036d2c821f49e",
+    "amap_security": "4318a9597a171c70a60fce718d67d959",
+    "max_refit": 3,
+    "ctrl": { "total": 8, "max": 10, "weight": 0.8, "radius": 12 },
+    "lane_width": 2.8,
+    "taper_points": 14,
+    "sample_rows": 40,
+    "lap_colors": ["#38b2ac", "#3182ce", "#805ad5", "#dd6b20", "#e53e3e", "#d69e2e"]
+  },
+  "anchors": {}
+}

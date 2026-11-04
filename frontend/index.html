@@ -5,14 +5,6 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>NekoSportsWorld Web</title>
 
-<!-- ============ 高德地图配置 ============ -->
-<script>
-  const AMAP_KEY = "712078f920fec121063036d2c821f49e";   // JS API key
-  window._AMapSecurityConfig = {
-    securityJsCode: "4318a9597a171c70a60fce718d67d959"  // key 配套的安全密钥 jscode
-  };
-</script>
-<script src="https://webapi.amap.com/loader.js"></script>
 <link rel="stylesheet" href="static/style.css">
 </head>
 <body>
@@ -37,11 +29,11 @@
       <h3>定位（GCJ-02 坐标）</h3>
       <div class="row">
         <label>纬度 lat</label>
-        <input id="inp-lat" placeholder="22.9058142" value="22.9058142">
+        <input id="inp-lat" placeholder="22.9058142">
       </div>
       <div class="row">
         <label>经度 lon</label>
-        <input id="inp-lon" placeholder="113.8709786" value="113.8709786">
+        <input id="inp-lon" placeholder="113.8709786">
       </div>
       <div class="hint" style="margin-top:-4px;margin-bottom:8px;">
         输入框与提交值均为 GCJ-02（高德原生坐标），选点/定位结果原样显示并提交。<br>

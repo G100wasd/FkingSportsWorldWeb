@@ -8,12 +8,14 @@ AR(1) GPS 抖动与异常点模拟，最后做打卡点 40m 吸附与围栏回�
 import math
 import random
 
+from ..config import CFG
 from .geom import (MET_LAT, MET_LNG, clamp_to_ring, make_point_ring,
                    ring_point_at, ring_tangent)
 
-SPEED_FLOOR = 1.90
-SPEED_CEIL = 6.30
-MAX_DRIFT = 2.5   # 漂移点最大跳变（米）：跑者基本在 1 道内，不放 6m 大飞点
+_T = CFG.get("track") or {}
+SPEED_FLOOR = _T.get("speed_floor", 1.90)
+SPEED_CEIL = _T.get("speed_ceil", 6.30)
+MAX_DRIFT = _T.get("max_drift", 2.5)   # 漂移点最大跳变（米）：跑者基本在 1 道内
 
 
 def _weighted(rng: random.Random, items):
@@ -56,9 +58,12 @@ def build_track(dist, dur, seed, points_bd, fence_ring=None, ring=None):
 
     times = []
     t = 0.0
+    _dt_main_p = _T.get("dt_main_p", 0.80)
+    _dt_main = _T.get("dt_main", 5.0)
+    _dt_others = _T.get("dt_others", [1.0, 2.0, 3.0, 4.0, 6.0, 7.0, 8.0])
     while t < dur_f:
         times.append(t)
-        t += 5.0 if rng.random() < 0.80 else rng.choice([1.0, 2.0, 3.0, 4.0, 6.0, 7.0, 8.0])
+        t += _dt_main if rng.random() < _dt_main_p else rng.choice(_dt_others)
     n = len(times)
 
     dips = [(rng.uniform(0.15, 0.75) * dur_f, rng.uniform(25.0, 55.0), rng.uniform(0.08, 0.16))
@@ -73,8 +78,8 @@ def build_track(dist, dur, seed, points_bd, fence_ring=None, ring=None):
 
     # 侧向摆动：两条低频正弦叠加，模拟跑者在道内的平滑走位
     # （幅度按"大部分时间在 1 道内"取：合成摆动 ~±1m 以内）
-    wv_a1, wv_t1 = rng.uniform(0.35, 0.8), rng.uniform(70.0, 130.0)
-    wv_a2, wv_t2 = rng.uniform(0.10, 0.3), rng.uniform(16.0, 30.0)
+    wv_a1, wv_t1 = rng.uniform(*_T.get("lateral_a1", [0.35, 0.8])), rng.uniform(70.0, 130.0)
+    wv_a2, wv_t2 = rng.uniform(*_T.get("lateral_a2", [0.10, 0.3])), rng.uniform(16.0, 30.0)
     wv_p1, wv_p2 = rng.uniform(0.0, math.tau), rng.uniform(0.0, math.tau)
 
     def lateral(tt):
@@ -83,8 +88,8 @@ def build_track(dist, dur, seed, points_bd, fence_ring=None, ring=None):
 
     base = dist / dur_f
     # 起步加速段 / 末段减速段：真实 GPS 轨迹两端的速度渐变
-    warmup = min(22.0, dur_f * 0.04)      # 起步 ~0-22s 线性加速
-    cooldown = min(16.0, dur_f * 0.03)    # 结束前 ~16s 线性减速
+    warmup = min(_T.get("warmup_s", 22.0), dur_f * 0.04)
+    cooldown = min(_T.get("cooldown_s", 16.0), dur_f * 0.03)
     w = []
     for tt in times:
         if tt < warmup:
@@ -105,14 +110,15 @@ def build_track(dist, dur, seed, points_bd, fence_ring=None, ring=None):
     seg = [w[i] * dts[i] for i in range(n)]
 
     tl_w = [((-1, 4), 54), ((-1, 1), 27), ((-1, 12), 13), ((-1, 5), 3), ((-1, 6), 2)]
+    _p1, _p2, _p3 = _T.get("ptype_cum", [0.39, 0.93, 0.96])
     kinds = []
     for _ in range(n):
         u = rng.random()
-        if u < 0.39:
+        if u < _p1:
             kinds.append((3, 1))
-        elif u < 0.93:
+        elif u < _p2:
             kinds.append((0, 1))
-        elif u < 0.96:
+        elif u < _p3:
             kinds.append(_weighted(rng, tl_w))
         else:
             kinds.append((rng.choice([1, 1, 1, 1, 2, 2]), 1))
@@ -141,10 +147,12 @@ def build_track(dist, dur, seed, points_bd, fence_ring=None, ring=None):
             x, y = ring_point_at(dense, arcs, s)
             tx, ty = ring_tangent(dense, arcs, s)
             lo = lateral(t_acc)
-            jx = 0.72 * jx + rng.gauss(0.0, 0.35)   # AR(1) 稳态 std ≈0.5m
-            jy = 0.72 * jy + rng.gauss(0.0, 0.35)
+            _sig = _T.get("ar1_sigma", 0.35)
+            jx = 0.72 * jx + rng.gauss(0.0, _sig)   # AR(1) 稳态 std ≈0.5m
+            jy = 0.72 * jy + rng.gauss(0.0, _sig)
             px, py = x - ty * lo + jx, y + tx * lo + jy
-            rad = round(rng.uniform(1.4, 3.0) if typ == 3 else rng.uniform(1.2, 2.0), 2)
+            rad = round(rng.uniform(*_T.get("radius_typ3", [1.4, 3.0]))
+                        if typ == 3 else rng.uniform(*_T.get("radius_normal", [1.2, 2.0])), 2)
             dist_acc += disp[i]
         else:
             d_step = rng.uniform(0.0, MAX_DRIFT) if rng.random() >= 0.20 else 0.0
@@ -159,7 +167,7 @@ def build_track(dist, dur, seed, points_bd, fence_ring=None, ring=None):
                 py = (locs[-1]["gLat"] - c_lat) * MET_LAT
             else:
                 px, py = x + jx, y + jy
-            rad = round(rng.uniform(1.6, 5.0), 2)
+            rad = round(rng.uniform(*_T.get("radius_drift", [1.6, 5.0])), 2)
         lat = c_lat + py / MET_LAT
         lng = c_lng + px / MET_LNG
         avg_sp = round(dist_acc / max(1.0, t_acc), 4) if typ == -1 else round(disp[i] / dt_i, 4)
@@ -178,7 +186,7 @@ def build_track(dist, dur, seed, points_bd, fence_ring=None, ring=None):
             dd = ((q["gLat"] - plat) * MET_LAT) ** 2 + ((q["gLng"] - plng) * MET_LNG) ** 2
             if dd < best_d:
                 best_i, best_d = i, dd
-        if best_i is not None and best_d < 40.0 ** 2:
+        if best_i is not None and best_d < _T.get("snap_tolerance_m", 40.0) ** 2:
             locs[best_i]["gLat"], locs[best_i]["gLng"] = plat, plng
             locs[best_i]["snapped"] = True
     clamp_to_ring(locs, fence_ring)

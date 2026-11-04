@@ -9,11 +9,12 @@ import uuid
 
 import httpx
 
+from ..config import CFG
 from ..integration.client import check_business, envelope_request, get_field
 from ..integration.envelope import EnvelopeSession, b64e, compact
 from ..integration.gt4 import solve_gt4
 
-HOST = "https://run.gxapp.iydsj.com"
+HOST = (CFG.get("server") or {}).get("host", "https://run.gxapp.iydsj.com")
 LOGIN_PATH = "/api/v70100/login"
 LOGOUT_PATH = "/api/v6/user/logout"
 GEECHECK_PATH = "/api/v65/security/checkGeeUse"

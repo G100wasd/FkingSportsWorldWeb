@@ -16,7 +16,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from prompts import DEFAULT_PASSWORD, DEFAULT_USERNAME
+from sportsworld.config import CFG, load as cfg_load, save as cfg_save
 from sportsworld.domain import stadium, track
 from sportsworld.services import runarea
 from sportsworld.services.auth import login
@@ -29,6 +29,20 @@ app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")
 # 单用户本地应用：只保留一个登录会话；锁保护登录/登出竞态
 _lock = threading.Lock()
 _session = None
+_username = ""          # 当前会话登录名（锚点按账号区分）
+
+
+def _anchor_for(username: str):
+    """该账号上次拟合使用的锚点（GCJ-02 原值），无记录返回 None。"""
+    return (cfg_load().get("anchors") or {}).get(username)
+
+
+def _save_anchor(username: str, lat: float, lon: float):
+    if not username:
+        return
+    cfg = cfg_load()
+    cfg.setdefault("anchors", {})[username] = {"lat": lat, "lon": lon}
+    cfg_save(cfg)
 
 
 class LoginBody(BaseModel):
@@ -43,10 +57,13 @@ class AnchorBody(BaseModel):
     lon: float
 
 
+_RUN = CFG.get("run") or {}
+
+
 class FitBody(BaseModel):
     """拟合目标：距离（米）+ 用时（秒）+ 伪装起跑时刻（毫秒时间戳）。"""
-    dist: float = 2200.0
-    dur: int = 720
+    dist: float = _RUN.get("default_dist", 2200.0)
+    dur: int = _RUN.get("default_dur", 720)
     start_ms: int = 0   # 0 = 未提供
 
 
@@ -66,34 +83,46 @@ def index():
 
 @app.get("/api/defaults")
 def api_defaults():
-    """前端输入框默认值（凭据只存在 prompts.py 一处）。"""
-    return {"username": DEFAULT_USERNAME, "password": DEFAULT_PASSWORD}
+    """前端默认值：凭据预填 + run/frontend 两组配置下发（JSON 单一来源）。"""
+    acc = CFG.get("account") or {}
+    return {
+        "username": acc.get("username", ""),
+        "password": acc.get("password", ""),
+        "run": _RUN,
+        "frontend": CFG.get("frontend") or {},
+    }
 
 
 @app.get("/api/session")
 def api_session():
-    return _sess_info(_session)
+    info = _sess_info(_session)
+    info["anchor"] = _anchor_for(_username) if _session else None
+    return info
 
 
 @app.post("/api/login")
 def api_login(body: LoginBody):
-    global _session
+    global _session, _username
     try:
         sess = login(body.username.strip(), body.password)
     except Exception as e:
         raise HTTPException(502, f"登录失败: {e}")
     with _lock:
         old, _session = _session, sess
+        _username = body.username.strip()
     if old is not None:
         old.logout()  # 顶号前登出旧会话
-    return _sess_info(sess)
+    info = _sess_info(sess)
+    info["anchor"] = _anchor_for(_username)
+    return info
 
 
 @app.post("/api/logout")
 def api_logout():
-    global _session
+    global _session, _username
     with _lock:
         sess, _session = _session, None
+        _username = ""
     if sess is not None:
         sess.logout()
     return _sess_info(None)
@@ -101,14 +130,16 @@ def api_logout():
 
 _last_fences = None  # 最近一次拉取的围栏数据（限流外，复用于拉点）
 _last_area = None    # 最近一次拉取的跑步区域（供 /api/fit 复用，避免重复拉点）
+_last_anchor = None  # 最近一次取点的锚点 (lat, lon) = 前端提交的 GCJ-02 原值
 
 
 @app.post("/api/points")
 def api_points(body: AnchorBody):
     """按锚点拉实时打卡点：后台自动完成 围栏 -> 计分跑申请 -> 取点。"""
-    global _last_fences, _last_area
+    global _last_fences, _last_area, _last_anchor
     if _session is None:
         raise HTTPException(401, "请先登录")
+    _last_anchor = (body.lat, body.lon)
     if _last_fences is None:
         try:
             _last_fences = runarea.fetch_fences(_session)
@@ -157,6 +188,11 @@ def api_fit(body: FitBody):
     except Exception as e:
         traceback.print_exc()
         raise HTTPException(502, f"拟合/轨迹生成失败: {e}")
+    if _last_anchor:
+        try:
+            _save_anchor(_username, _last_anchor[0], _last_anchor[1])
+        except Exception:
+            traceback.print_exc()   # 锚点持久化失败不影响拟合结果
     perim = fit["perimeter"] or 1.0
     total_dis = float(locs[-1]["totalDis"]) if locs else 0.0
     total_time = int(locs[-1]["totalTime"]) if locs else 0
@@ -196,4 +232,5 @@ def _on_shutdown():
 
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="127.0.0.1", port=8000)
+    uvicorn.run(app, host="127.0.0.1",
+            port=(CFG.get("server") or {}).get("listen_port", 8000))

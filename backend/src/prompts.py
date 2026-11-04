@@ -1,9 +1,12 @@
-"""命令行账密输入：回车使用已保存的默认凭据。"""
+"""命令行账密输入：回车使用 projectConfig.json 中的默认凭据。"""
 
 import getpass
 
-DEFAULT_USERNAME = "18818920029"
-DEFAULT_PASSWORD = "Wasd10086"
+from sportsworld.config import CFG
+
+_acc = CFG.get("account") or {}
+DEFAULT_USERNAME = _acc.get("username", "")
+DEFAULT_PASSWORD = _acc.get("password", "")
 
 
 def get_credentials() -> tuple[str, str]:

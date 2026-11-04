@@ -16,6 +16,9 @@ let ctrlWeight = 0.8; // 点权重：0=无影响，1=路径必过该点
 let ctrlRadius = 12;  // 影响半径（米）：窗外轨迹严格不受影响
 let editing = false;
 let lastFit = null;   // 最近一次拟合完整响应（summary/详细数据/提交用）
+let FE = {            // /api/defaults 下发的配置（run/frontend 两组）
+  run: {}, frontend: {},
+};
 
 function setStatus(cls, text) {
   statusEl.className = cls;
@@ -89,12 +92,28 @@ function syncMarkerFromInputs() {
 
 /* ---------- 高德地图 ---------- */
 
+// 高德 loader：拿到 /api/defaults 的 key/security 后才注入 script
+let _loaderP = null;
+function ensureLoader() {
+  if (!_loaderP) {
+    window._AMapSecurityConfig = { securityJsCode: FE.frontend.amap_security };
+    _loaderP = new Promise((res, rej) => {
+      const s = document.createElement("script");
+      s.src = "https://webapi.amap.com/loader.js";
+      s.onload = res;
+      s.onerror = () => rej(new Error("高德 loader 加载失败"));
+      document.head.appendChild(s);
+    });
+  }
+  return _loaderP;
+}
+
 function initMap() {
-  return AMapLoader.load({
-    key: AMAP_KEY,
+  return ensureLoader().then(() => AMapLoader.load({
+    key: FE.frontend.amap_key,
     version: "2.0",
     plugins: ["AMap.Geolocation", "AMap.Scale", "AMap.ToolBar", "AMap.ConvertFrom"],
-  }).then(AMap => {
+  })).then(AMap => {
     AMap_ = AMap;
     map = new AMap.Map("map", {
       zoom: 15, dragEnable: true, zoomEnable: true,
@@ -117,24 +136,27 @@ function onMapClick(e) {
   togglePick(false);
 }
 
-function locateMe(AMap) {
+// force=false 时若输入框已有锚点（配置回填）则不覆盖；按钮手动定位传 force=true
+function locateMe(AMap, force) {
+  const fill = (gLat, gLon, label) => {
+    if (!force && readInputs()) return;
+    writeInputs(gLat, gLon);
+    map.setCenter(setMarkerAt(gLat, gLon, label));
+  };
   const geo = new AMap.Geolocation({
     enableHighAccuracy: true, timeout: 10000,
     convert: true, showButton: false, showMarker: false,
   });
   geo.getCurrentPosition((status, result) => {
     if (status === "complete") {
-      const gLat = result.position.lat, gLon = result.position.lng;
-      writeInputs(gLat, gLon);
-      map.setCenter(setMarkerAt(gLat, gLon, "本机定位"));
+      fill(result.position.lat, result.position.lng, "本机定位");
     } else {
       navigator.geolocation?.getCurrentPosition(
         pos => {
           const ll = [pos.coords.longitude, pos.coords.latitude];
           AMap.convertFrom(ll, "gps", (st, res) => {
             const g = (st === "ok" && res.locations[0]) ? res.locations[0] : ll;
-            writeInputs(g.lat, g.lng);
-            map.setCenter(setMarkerAt(g.lat, g.lng, "GPS定位"));
+            fill(g.lat, g.lng, "GPS定位");
           });
         },
         () => {},
@@ -153,8 +175,18 @@ function togglePick(force) {
   $("map").classList.toggle("picking", picking);
 }
 
+// 登录/恢复会话后应用后端保存的锚点；无记录返回 false -> 首开本机定位
+function applyAnchor(a) {
+  if (a && isFinite(+a.lat) && isFinite(+a.lon)) {
+    writeInputs(+a.lat, +a.lon);
+    if (map) map.setCenter(setMarkerAt(+a.lat, +a.lon, "上次锚点"));
+    return true;
+  }
+  return false;
+}
+
 $("btn-pick").onclick = () => togglePick();
-$("btn-geoloc").onclick = () => { if (AMap_) locateMe(AMap_); };
+$("btn-geoloc").onclick = () => { if (AMap_) locateMe(AMap_, true); };
 $("btn-goto").onclick = () => {
   const c = readInputs();
   if (!c) return;
@@ -167,8 +199,13 @@ $("inp-lon").addEventListener("input", syncMarkerFromInputs);
 
 /* ---------- 跑步配置：伪装时间 / 距离 / 均速↔用时联动 ---------- */
 
-const CFG_DEFAULT_DIST = 2200, CFG_DEFAULT_DUR = 720;
-const CFG_START_LO = 6, CFG_START_HI = 22;   // 伪装时间许可窗口 06:00–22:00
+// 以下均为内置兜底值，启动时被 /api/defaults 下发的 projectConfig 覆盖
+let CFG_DEFAULT_DIST = 2200, CFG_DEFAULT_DUR = 720;
+let CFG_START_LO = 6, CFG_START_HI = 22;   // 伪装时间许可窗口 06:00–22:00
+let CFG_DEF_START = "15:30";               // 默认起跑时刻
+let CFG_JITTER = [1, 5];                   // 默认起跑随机偏移范围（分钟）
+let TAPER_PTS = 14;                        // 打卡锚点渐隐范围（密点数）
+let SAMPLE_ROWS = 40;                      // 逐点采样表目标行数
 
 function cfgDist() {
   const v = parseFloat($("cfg-dist").value);
@@ -238,11 +275,14 @@ function computeStart() {
   const dv = ($("cfg-date").value || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
   const m = raw.match(/^([01]?\d|2[0-3]):([0-5]\d)$/);
   const inWin = m && +m[1] >= CFG_START_LO && +m[1] < CFG_START_HI;
-  const jitter = (1 + Math.floor(Math.random() * 5)) * (Math.random() < .5 ? -1 : 1);
+  const [dh, dm] = CFG_DEF_START.split(":").map(Number);
+  const jitter = (CFG_JITTER[0] +
+    Math.floor(Math.random() * (CFG_JITTER[1] - CFG_JITTER[0] + 1))) *
+    (Math.random() < .5 ? -1 : 1);
   const sec = Math.floor(Math.random() * 60);
   const applyTime = d => inWin
     ? d.setHours(+m[1], +m[2], sec, 0)
-    : d.setHours(15, 30 + jitter, sec, 0);
+    : d.setHours(dh, dm + jitter, sec, 0);
   const p = n => String(n).padStart(2, "0");
 
   let base = dv ? new Date(+dv[1], +dv[2] - 1, +dv[3]) : new Date();
@@ -271,8 +311,6 @@ function updateCfgHint() {
     ` ｜ ${cfgDist().toFixed(0)}m · ${fmtDur(cfgEffDur())} · ` +
     `${(cfgDist() / cfgEffDur()).toFixed(2)} m/s`;
 }
-updateCfgHint();
-
 function fitGoal() {
   return { dist: cfgDist(), dur: cfgEffDur(), start_ms: resolveStartMs() };
 }
@@ -346,7 +384,7 @@ async function fetchPoints() {
   }
 }
 
-const MAX_REFIT = 3;   // 无可行解时自动 重拉点->重拟合 的最大次数（受点位限流约束）
+let MAX_REFIT = 3;     // 无可行解时自动 重拉点->重拟合 的最大次数（受点位限流约束）
 
 // 拟合跑道虚线 + 蓝轨迹 + 起终点上图
 function renderFit(d, retried) {
@@ -467,7 +505,7 @@ function renderDetail(d) {
 
   // ④ 逐点采样表（等距 ~40 行 + 全部吸附点）
   if (full.length) {
-    const step = Math.max(1, Math.floor(full.length / 40));
+    const step = Math.max(1, Math.floor(full.length / SAMPLE_ROWS));
     const rows = [];
     for (let i = 0; i < full.length; i++) {
       if (i % step !== 0 && !snap.has(i) && i !== full.length - 1) continue;
@@ -587,9 +625,9 @@ function recomputeTrack() {
 }
 
 // 分圈显示：中线数据不变，画的时候按圈号沿法线错开（显示层偏移）
-const LAP_COLORS = ["#38b2ac", "#3182ce", "#805ad5",
-                    "#dd6b20", "#e53e3e", "#d69e2e"];
-const LANE_W = 2.8;     // 圈间距（米）
+let LAP_COLORS = ["#38b2ac", "#3182ce", "#805ad5",
+                  "#dd6b20", "#e53e3e", "#d69e2e"];
+let LANE_W = 2.8;       // 圈间距（米）
 const MET_L = 111195;
 
 // 打卡点附近偏移渐隐到 0：轨迹仍精确穿过 5 个锚点
@@ -600,7 +638,7 @@ function taperWeight(i) {
     const d = Math.min(Math.abs(i - j), n - Math.abs(i - j));
     if (d < dmin) dmin = d;
   }
-  return Math.min(1, dmin / 14);
+  return Math.min(1, dmin / TAPER_PTS);
 }
 
 // 轨迹点 i 的显示坐标 = 中线 + 法线方向 × (圈偏移 × 渐隐权重)
@@ -826,7 +864,9 @@ async function doLogin() {
     sess = await api("/api/login", { username, password });
     setStatus("on", `已登录 ${sess.name || ""} (uid=${sess.uid})`);
     $("btn-logout").style.display = "";
-    if (!map) initMap().catch(e => setStatus("err", "地图加载失败: " + e));
+    if (!map) await initMap().catch(e => setStatus("err", "地图加载失败: " + e));
+    // 有该账号的历史锚点则回填；否则本机定位已在 initMap 中执行
+    if (!applyAnchor(sess.anchor) && map) locateMe(AMap_);
   } catch (e) {
     setStatus("err", e.message);
   } finally {
@@ -845,18 +885,52 @@ $("btn-login").onclick = doLogin;
 $("btn-logout").onclick = doLogout;
 $("inp-pass").addEventListener("keydown", e => { if (e.key === "Enter") doLogin(); });
 
-// 后端下发默认账号密码，预填输入框
-fetch("/api/defaults").then(r => r.json()).then(d => {
-  if (d.username) $("inp-user").value = d.username;
-  if (d.password) $("inp-pass").value = d.password;
-});
+/* ---------- 启动：拉配置 -> 恢复会话 ---------- */
 
-// 刷新页面时若后端仍有会话，恢复状态
-fetch("/api/session").then(r => r.json()).then(d => {
-  if (d.logged_in) {
-    sess = d;
-    setStatus("on", `已登录 ${d.name || ""} (uid=${d.uid})`);
-    $("btn-logout").style.display = "";
-    initMap().catch(() => {});
+(async function boot() {
+  // ① /api/defaults：凭据预填 + projectConfig 的 run/frontend 覆盖内置默认
+  try {
+    const d = await fetch("/api/defaults").then(r => r.json());
+    FE = d;
+    if (d.username) $("inp-user").value = d.username;
+    if (d.password) $("inp-pass").value = d.password;
+    const R = d.run || {}, F = d.frontend || {}, C = F.ctrl || {};
+    CFG_DEFAULT_DIST = R.default_dist ?? CFG_DEFAULT_DIST;
+    CFG_DEFAULT_DUR = R.default_dur ?? CFG_DEFAULT_DUR;
+    CFG_DEF_START = R.default_start || CFG_DEF_START;
+    CFG_JITTER = R.start_jitter_min || CFG_JITTER;
+    if (R.start_window) [CFG_START_LO, CFG_START_HI] = R.start_window;
+    MAX_REFIT = F.max_refit ?? MAX_REFIT;
+    LANE_W = F.lane_width ?? LANE_W;
+    LAP_COLORS = F.lap_colors || LAP_COLORS;
+    TAPER_PTS = F.taper_points ?? TAPER_PTS;
+    SAMPLE_ROWS = F.sample_rows ?? SAMPLE_ROWS;
+    ctrlTotal = C.total ?? ctrlTotal;
+    ctrlWeight = C.weight ?? ctrlWeight;
+    ctrlRadius = C.radius ?? ctrlRadius;
+    $("cfg-dist").value = CFG_DEFAULT_DIST;
+    $("cfg-dur").placeholder = fmtDur(CFG_DEFAULT_DUR) + "（默认）";
+    $("ctrl-count").max = C.max || 10;
+    $("ctrl-count").value = ctrlTotal;
+    $("ctrl-count-val").textContent = ctrlTotal;
+    $("ctrl-weight").value = ctrlWeight;
+    $("ctrl-weight-val").textContent = ctrlWeight;
+    $("ctrl-radius").value = ctrlRadius;
+    $("ctrl-radius-val").textContent = ctrlRadius + "m";
+  } catch (e) {
+    console.warn("配置下发失败，使用内置默认值", e);
   }
-});
+  updateCfgHint();
+
+  // ② 刷新恢复会话（含该账号保存的锚点）
+  try {
+    const d = await fetch("/api/session").then(r => r.json());
+    if (d.logged_in) {
+      sess = d;
+      setStatus("on", `已登录 ${d.name || ""} (uid=${d.uid})`);
+      $("btn-logout").style.display = "";
+      await initMap().catch(() => {});
+      if (!applyAnchor(d.anchor) && map) locateMe(AMap_);
+    }
+  } catch (e) { /* 忽略 */ }
+})();
