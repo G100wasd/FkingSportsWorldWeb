@@ -50,15 +50,27 @@ class Session:
             print(f"[logout] 失败: {e}")
 
 
-def default_identity() -> dict:
-    """设备身份。device_id/app_install_time 为空时逐请求随机/回退；
-    正式使用应持久化以提升设备一致性。"""
+def default_identity(device: dict | None = None) -> dict:
+    """设备身份。device={platform,device_name,os_version} 来自前端探测；
+    缺省按"非手机→默认安卓红米 22081212C/Android 14"全流程伪装。
+    device_id/app_install_time 为空时逐请求随机/回退。"""
     import secrets as _secrets
+    device = device or {}
+    platform = device.get("platform") or "android"
+    if platform == "ios":
+        dev_name, os_ver = device.get("device_name") or "iPhone", \
+            device.get("os_version") or "26.5.2"
+    else:
+        platform = "android"
+        dev_name, os_ver = device.get("device_name") or "22081212C", \
+            device.get("os_version") or "14"
     return {
+        "platform": platform,
         "device_id": "",
-        "device_name": "iPhone",
-        "os_version": "26.5.2",
-        "mac_address": "08:a4:%02x:%02x:%02x:%02x" % tuple(_secrets.randbelow(256) for _ in range(4)),
+        "device_name": dev_name,
+        "os_version": os_ver,
+        "mac_address": "08:a4:%02x:%02x:%02x:%02x" % tuple(
+            _secrets.randbelow(256) for _ in range(4)),
         "app_install_time": 0,
         "idfa": "",
     }

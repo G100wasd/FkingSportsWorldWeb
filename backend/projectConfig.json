@@ -18,7 +18,9 @@
     "start_window": [
       6,
       22
-    ]
+    ],
+    "face_check": 0,
+    "address": ""
   },
   "track": {
     "speed_floor": 1.9,

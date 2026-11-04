@@ -19,8 +19,8 @@ from pydantic import BaseModel
 
 from sportsworld.config import CFG, load as cfg_load, save as cfg_save
 from sportsworld.domain import stadium, track, wire
-from sportsworld.services import runarea
-from sportsworld.services.auth import login
+from sportsworld.services import runarea, submit
+from sportsworld.services.auth import default_identity, login
 
 FRONTEND_DIR = Path(__file__).resolve().parents[2] / "frontend"
 
@@ -49,6 +49,7 @@ def _save_anchor(username: str, lat: float, lon: float):
 class LoginBody(BaseModel):
     username: str
     password: str
+    device: dict | None = None   # 前端探测的设备环境 {platform,device_name,os_version}
 
 
 class AnchorBody(BaseModel):
@@ -69,11 +70,15 @@ class FitBody(BaseModel):
 
 
 def _sess_info(sess):
+    iden = (sess.identity if sess else {}) or {}
     return {
         "logged_in": sess is not None,
         "uid": sess.uid if sess else 0,
         "name": sess.name if sess else "",
         "unid": sess.unid if sess else "",
+        "platform": iden.get("platform", ""),
+        "device_name": iden.get("device_name", ""),
+        "os_version": iden.get("os_version", ""),
     }
 
 
@@ -105,7 +110,8 @@ def api_session():
 def api_login(body: LoginBody):
     global _session, _username
     try:
-        sess = login(body.username.strip(), body.password)
+        sess = login(body.username.strip(), body.password,
+                     identity=default_identity(body.device))
     except Exception as e:
         raise HTTPException(502, f"登录失败: {e}")
     with _lock:
@@ -206,6 +212,15 @@ def api_fit(body: FitBody):
         run_area_id=area.get("meta_run_area_id", -1),
         geo_fences=area.get("geo_fences") or [],
         freedom_show_fence=area.get("freedom_show_fence", False))
+    scoring = area.get("scoring") or {}
+    record_body, run_uuid = submit.build_record_body(
+        trk, uid=_session.uid,
+        selected_unid=int(_session.unid) if str(_session.unid).isdigit() else 0,
+        policy=scoring.get("policy") or 0,
+        min_distance=int(scoring.get("minDistance") or 0),
+        face_check=_RUN.get("face_check", 0),
+        five_point_json=five_point,
+        address=_RUN.get("address", ""))
     return {
         "track_bd": fit["track_bd"],
         "locs": [[q["gLat"], q["gLng"], int(q["totalDis"] // perim)]
@@ -219,6 +234,8 @@ def api_fit(body: FitBody):
         "step_windows": step_win,
         "laps": wire.build_laps(trk, trk["startTime"]),
         "five_point": json.loads(five_point),
+        "record_body": record_body,
+        "run_uuid": run_uuid,
         "summary": {
             "distance_m": round(total_dis, 1),
             "duration_s": total_time,

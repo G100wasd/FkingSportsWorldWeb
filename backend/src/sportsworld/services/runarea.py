@@ -90,6 +90,7 @@ def fetch_area_points(sess, fence_bundle: dict, lat: float, lon: float,
         summ = policy.policy_summary(biz)
         scoring = {"ok": True, "minDistance": summ["minDistance"],
                    "validTime": summ["validTime"], "policy": summ["policy"],
+                   "policy_ts": summ["timestamp"],
                    "must_points": summ["must_points"]}
         print(f"[scoring] 开启成功 minDistance={summ['minDistance']} "
               f"policy={summ['policy']} must={len(summ['must_points'])}")

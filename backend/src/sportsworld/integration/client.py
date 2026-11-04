@@ -7,7 +7,8 @@ import httpx
 
 from .decrypt import decrypt_response, derive_paes_key
 from .envelope import EnvelopeSession, build_envelope, now_ms
-from .header import IOS_APP_VERSION, UA_IOS, build_ios_header
+from .header import (IOS_APP_VERSION, UA_ANDROID, UA_IOS,
+                     build_header)
 
 
 def _send_with_retry(client: httpx.Client, method: str, url: str,
@@ -40,15 +41,17 @@ def envelope_request(
 
     ts_ms 覆盖请求时间戳（header/container 共用）；None 取当前时间。"""
     ts = ts_ms if ts_ms is not None else now_ms()
-    header_plain = build_ios_header(identity, uid, token, ts)
+    platform = (identity or {}).get("platform", "ios")
+    # 普通调用丢弃 extras（nonce/timeStamp/tokenSign 仅 save/record 随头发送）
+    header_plain, _extras = build_header(identity, uid, token, ts)
     header_env, _, _ = build_envelope(session, header_plain, "observed", ts)
     # body 时间戳 = header ts + 1（原生两次独立读取毫秒）
     body_env, kd, _ = build_envelope(session, body_plain, "insert", ts + 1)
 
     headers = {
         "Content-Type": "application/json; charset=utf-8",
-        "User-Agent": UA_IOS,
-        "appVersion": IOS_APP_VERSION,
+        "User-Agent": UA_ANDROID if platform == "android" else UA_IOS,
+        "appVersion": IOS_APP_VERSION,   # HTTP 层恒 7.3.40（与 Rust 一致）
         "headerSign": header_env,
     }
     headers.update(extra_headers or {})

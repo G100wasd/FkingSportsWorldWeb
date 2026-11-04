@@ -571,7 +571,29 @@ function renderDetail(d) {
       `</div>`;
   }
 
-  // ⑦ 公里圈（OBS laps_json 形态：每 1000m 一圈）
+  // ⑦ 提交体预览（save/record body，未发送；signature/originalSign 已生成）
+  if (d.record_body) {
+    const b = d.record_body;
+    const rows = [
+      ["sportType", b.sportType], ["policy", b.policy],
+      ["totalTime", b.totalTime], ["totalDis", b.totalDis],
+      ["speed(千分位配速)", b.speed], ["validDis", b.validDis],
+      ["validTime", b.validTime], ["totalSteps", b.totalSteps],
+      ["avgStepFreq", b.avgStepFreq], ["calorie", b.calorie],
+      ["avgPower", b.avgPower], ["totalAscent", b.totalAscent],
+      ["selDistance", b.selDistance], ["startTime", b.startTime],
+      ["stopTime", b.stopTime], ["faceCheck", b.faceCheck],
+      ["uid", b.uid], ["selectedUnid", b.selectedUnid],
+      ["uuid", b.uuid], ["address", b.address || "(空)"],
+    ].map(([k, v]) => ({ cells: [k, v] }));
+    html += `<div class="detail-sec"><h4>提交体预览（save/record，未发送）</h4>` +
+      `<div class="detail-scroll">` + tbl(["字段", "值"], rows) + `</div>` +
+      `<div class="mono" style="word-break:break-all;margin-top:6px">` +
+      `signature: ${esc(b.signature)}<br>` +
+      `originalSign: ${esc(String(b.originalSign).slice(0, 220))}…</div></div>`;
+  }
+
+  // ⑧ 公里圈（OBS laps_json 形态：每 1000m 一圈）
   if (Array.isArray(d.laps) && d.laps.length) {
     const rows = d.laps.map(l => ({ cells: [
       l.lapIndex, (l.distance || 0).toFixed(0), fmtDur(l.duration || 0),
@@ -937,7 +959,36 @@ $("btn-submit").onclick = () => {
     `（轨迹字段/签名/OBS 上传）仍在逆向中。</span>`;
 };
 
-/* ---------- 登录流程 ---------- */
+/* ---------- 设备环境探测：手机→用手机身份，非手机→后端默认安卓 ---------- */
+
+function detectDevice() {
+  const ua = navigator.userAgent || "";
+  if (/iPhone|iPad|iPod/i.test(ua)) {
+    const m = ua.match(/OS (\d+([._]\d+)*)/);
+    return { platform: "ios", device_name: "iPhone",
+             os_version: m ? m[1].replace(/_/g, ".") : "26.5.2",
+             detected: true };
+  }
+  const m = ua.match(/Android (\d+\.?\d*)/i);
+  if (m) {
+    const model = (ua.match(/;\s*([^;)]+?)\s+Build\//) || [])[1] || "";
+    return { platform: "android",
+             device_name: model || "22081212C",
+             os_version: m[1], detected: true };
+  }
+  return { platform: "android", device_name: "22081212C",
+           os_version: "14", detected: false };   // 桌面：默认安卓伪装
+}
+const DEVICE = detectDevice();
+
+function deviceLabel(sess_platform) {
+  const p = sess_platform || DEVICE.platform;
+  const nm = sess_platform ? "" : DEVICE.device_name;
+  return (p === "android" ? "Android" : "iOS") + " " +
+         (sess_platform || DEVICE.os_version) +
+         (sess_platform ? "" : " " + nm) +
+         (DEVICE.detected ? "（检测）" : "（桌面伪装）");
+}
 
 async function doLogin() {
   const username = $("inp-user").value.trim();
@@ -946,8 +997,12 @@ async function doLogin() {
   $("btn-login").disabled = true;
   setStatus("busy", "登录中...");
   try {
-    sess = await api("/api/login", { username, password });
-    setStatus("on", `已登录 ${sess.name || ""} (uid=${sess.uid})`);
+    sess = await api("/api/login", { username, password, device: DEVICE });
+    const env = sess.platform
+      ? `${sess.platform === "android" ? "Android" : "iOS"} ` +
+        `${sess.os_version} ${sess.device_name}`
+      : deviceLabel();
+    setStatus("on", `已登录 ${sess.name || ""} (uid=${sess.uid}) ｜ ${env}`);
     $("btn-logout").style.display = "";
     if (!map) await initMap().catch(e => setStatus("err", "地图加载失败: " + e));
     // 有该账号的历史锚点则回填；否则本机定位已在 initMap 中执行
@@ -1012,7 +1067,12 @@ $("inp-pass").addEventListener("keydown", e => { if (e.key === "Enter") doLogin(
     const d = await fetch("/api/session").then(r => r.json());
     if (d.logged_in) {
       sess = d;
-      setStatus("on", `已登录 ${d.name || ""} (uid=${d.uid})`);
+      const env = d.platform
+        ? `${d.platform === "android" ? "Android" : "iOS"} ` +
+          `${d.os_version} ${d.device_name}`
+        : "";
+      setStatus("on", `已登录 ${d.name || ""} (uid=${d.uid})` +
+                (env ? ` ｜ ${env}` : ""));
       $("btn-logout").style.display = "";
       await initMap().catch(() => {});
       if (!applyAnchor(d.anchor) && map) locateMe(AMap_);
