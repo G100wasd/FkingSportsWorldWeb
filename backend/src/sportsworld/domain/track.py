@@ -13,7 +13,7 @@ from .geom import (MET_LAT, MET_LNG, clamp_to_ring, make_point_ring,
 
 SPEED_FLOOR = 1.90
 SPEED_CEIL = 6.30
-MAX_DRIFT = 6.0
+MAX_DRIFT = 2.5   # 漂移点最大跳变（米）：跑者基本在 1 道内，不放 6m 大飞点
 
 
 def _weighted(rng: random.Random, items):
@@ -72,9 +72,9 @@ def build_track(dist, dur, seed, points_bd, fence_ring=None, ring=None):
         return f
 
     # 侧向摆动：两条低频正弦叠加，模拟跑者在道内的平滑走位
-    # （与逐点 AR(1) 高频 GPS 抖动叠加，合成真实轨迹观感）
-    wv_a1, wv_t1 = rng.uniform(0.8, 1.5), rng.uniform(70.0, 130.0)
-    wv_a2, wv_t2 = rng.uniform(0.25, 0.6), rng.uniform(16.0, 30.0)
+    # （幅度按"大部分时间在 1 道内"取：合成摆动 ~±1m 以内）
+    wv_a1, wv_t1 = rng.uniform(0.35, 0.8), rng.uniform(70.0, 130.0)
+    wv_a2, wv_t2 = rng.uniform(0.10, 0.3), rng.uniform(16.0, 30.0)
     wv_p1, wv_p2 = rng.uniform(0.0, math.tau), rng.uniform(0.0, math.tau)
 
     def lateral(tt):
@@ -134,10 +134,10 @@ def build_track(dist, dur, seed, points_bd, fence_ring=None, ring=None):
             x, y = ring_point_at(dense, arcs, s)
             tx, ty = ring_tangent(dense, arcs, s)
             lo = lateral(t_acc)
-            jx = 0.72 * jx + rng.gauss(0.0, 0.75)
-            jy = 0.72 * jy + rng.gauss(0.0, 0.75)
+            jx = 0.72 * jx + rng.gauss(0.0, 0.35)   # AR(1) 稳态 std ≈0.5m
+            jy = 0.72 * jy + rng.gauss(0.0, 0.35)
             px, py = x - ty * lo + jx, y + tx * lo + jy
-            rad = round(rng.uniform(1.4, 5.1) if typ == 3 else rng.uniform(1.4, 2.4), 2)
+            rad = round(rng.uniform(1.4, 3.0) if typ == 3 else rng.uniform(1.2, 2.0), 2)
             dist_acc += disp[i]
         else:
             d_step = rng.uniform(0.0, MAX_DRIFT) if rng.random() >= 0.20 else 0.0
@@ -152,7 +152,7 @@ def build_track(dist, dur, seed, points_bd, fence_ring=None, ring=None):
                 py = (locs[-1]["gLat"] - c_lat) * MET_LAT
             else:
                 px, py = x + jx, y + jy
-            rad = round(rng.uniform(1.6, 10.0), 2)
+            rad = round(rng.uniform(1.6, 5.0), 2)
         lat = c_lat + py / MET_LAT
         lng = c_lng + px / MET_LNG
         avg_sp = round(dist_acc / max(1.0, t_acc), 4) if typ == -1 else round(disp[i] / dt_i, 4)
