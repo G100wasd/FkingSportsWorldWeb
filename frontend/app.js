@@ -959,6 +959,15 @@ $("btn-submit").onclick = () => {
     `（轨迹字段/签名/OBS 上传）仍在逆向中。</span>`;
 };
 
+/* ---------- 卡片折叠 ---------- */
+
+document.querySelectorAll(".collapse-btn").forEach(btn => {
+  btn.addEventListener("click", () => {
+    const card = btn.closest(".card");
+    if (card) card.classList.toggle("collapsed");
+  });
+});
+
 /* ---------- 设备环境探测：手机→用手机身份，非手机→后端默认安卓 ---------- */
 
 function detectDevice() {

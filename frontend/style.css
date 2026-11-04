@@ -58,6 +58,27 @@ body { display: flex; flex-direction: column; }
   box-shadow: 0 1px 4px rgba(0,0,0,.12);
 }
 .card h3 { font-size: 14px; color: #2d3748; margin-bottom: 12px; }
+
+/* ---------- 卡片折叠 ---------- */
+.collapse-btn {
+  all: unset;
+  display: flex; align-items: center; justify-content: space-between;
+  width: 100%; box-sizing: border-box;
+  font: inherit; cursor: pointer; user-select: none;
+}
+.collapse-btn .caret {
+  flex-shrink: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 22px; height: 22px; margin-left: 8px;
+  font-size: 12px; line-height: 1; color: #718096;
+  border: 1px solid #e2e8f0; border-radius: 5px; background: #f7fafc;
+  transition: transform .15s, background .15s;
+}
+.collapse-btn:hover .caret { background: #edf2f7; color: #4a5568; }
+.collapse-btn:focus-visible .caret { outline: 2px solid #3182ce; }
+.collapsed > h3.collapsible { margin-bottom: 0; }
+.collapsed .collapse-btn .caret { transform: rotate(-90deg); }
+.card.collapsed > :not(h3) { display: none; }
 .row { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
 .row label { width: 74px; font-size: 13px; color: #4a5568; flex-shrink: 0; }
 .row input {
