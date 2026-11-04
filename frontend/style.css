@@ -1,0 +1,118 @@
+* { box-sizing: border-box; margin: 0; }
+html, body { height: 100%; font-family: "Microsoft YaHei", sans-serif; background: #f0f2f5; }
+body { display: flex; flex-direction: column; }
+
+/* ---------- 顶栏 ---------- */
+#bar {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 16px; background: #1f2733; color: #e8ecf1;
+  flex-wrap: wrap;
+}
+#bar .logo { font-weight: 700; margin-right: 12px; }
+#bar input {
+  width: 160px; padding: 7px 10px; border: 1px solid #4a5568;
+  border-radius: 6px; background: #2d3748; color: #fff; outline: none;
+}
+#bar input:focus { border-color: #63b3ed; }
+#bar button {
+  padding: 7px 18px; border: none; border-radius: 6px;
+  background: #3182ce; color: #fff; cursor: pointer;
+}
+#bar button:hover { background: #4299e1; }
+#bar button:disabled { background: #4a5568; cursor: not-allowed; }
+#btn-logout { background: #744210; display: none; }
+#btn-logout:hover { background: #975a16; }
+
+#status {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 13px; padding: 4px 12px; border-radius: 999px;
+  background: #4a5568;
+}
+#status .dot { width: 9px; height: 9px; border-radius: 50%; }
+#status.off  .dot { background: #a0aec0; }
+#status.busy .dot { background: #ed8936; animation: blink .7s infinite alternate; }
+#status.on   .dot { background: #48bb78; }
+#status.err  .dot { background: #f56565; }
+@keyframes blink { to { opacity: .3; } }
+
+/* ---------- 主体：左地图 + 右面板 ---------- */
+#content {
+  flex: 1; display: flex; gap: 14px; padding: 14px;
+  align-items: flex-start; overflow: auto;
+}
+#map-card {
+  flex: 0 0 58%; max-width: 720px;
+  background: #fff; border-radius: 10px; overflow: hidden;
+  box-shadow: 0 1px 4px rgba(0,0,0,.12);
+}
+#map-card h3 {
+  padding: 10px 14px; font-size: 14px; color: #2d3748;
+  border-bottom: 1px solid #e2e8f0; background: #fafbfc;
+}
+#map { height: 480px; }
+#map.picking { cursor: crosshair; }
+
+#panel { flex: 1; min-width: 280px; display: flex; flex-direction: column; gap: 14px; }
+.card {
+  background: #fff; border-radius: 10px; padding: 14px 16px;
+  box-shadow: 0 1px 4px rgba(0,0,0,.12);
+}
+.card h3 { font-size: 14px; color: #2d3748; margin-bottom: 12px; }
+.row { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+.row label { width: 74px; font-size: 13px; color: #4a5568; flex-shrink: 0; }
+.row input {
+  flex: 1; padding: 7px 10px; border: 1px solid #cbd5e0;
+  border-radius: 6px; font-size: 13px; outline: none;
+}
+.row input:focus { border-color: #3182ce; }
+.btn-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.btn-row button {
+  flex: 1; min-width: 80px; padding: 8px 6px; border: 1px solid #cbd5e0;
+  border-radius: 6px; background: #fff; color: #2d3748;
+  font-size: 13px; cursor: pointer;
+}
+.btn-row button:hover { background: #edf2f7; }
+.btn-row button:disabled {
+  background: #e2e8f0; color: #a0aec0;
+  border-color: #e2e8f0; cursor: not-allowed;
+}
+.btn-row button.active { background: #3182ce; color: #fff; border-color: #3182ce; }
+.hint { font-size: 12px; color: #718096; margin-top: 8px; line-height: 1.6; }
+.fit-summary {
+  display: flex; gap: 6px; flex-wrap: wrap;
+  font-size: 13px; color: #2d3748;
+}
+.fit-summary .kv {
+  flex: 1; min-width: 90px; background: #f7fafc;
+  border: 1px solid #e2e8f0; border-radius: 6px;
+  padding: 6px 8px; text-align: center;
+}
+.fit-summary .kv b { display: block; font-size: 15px; color: #2b6cb0; }
+#fit-detail { margin-top: 8px; }
+#fit-detail summary {
+  font-size: 12px; color: #4a5568; cursor: pointer; user-select: none;
+}
+.sub-detail { margin-top: 6px; }
+.sub-detail summary { color: #a0aec0 !important; }
+.detail-sec { margin-top: 8px; }
+.detail-sec h4 {
+  margin: 0 0 4px; font-size: 12px; color: #4a5568; font-weight: 600;
+}
+.detail-sec table {
+  width: 100%; border-collapse: collapse; font-size: 11px;
+}
+.detail-sec th, .detail-sec td {
+  border: 1px solid #e2e8f0; padding: 3px 6px; text-align: right;
+  color: #2d3748;
+}
+.detail-sec th { background: #edf2f7; text-align: center; color: #4a5568; }
+.detail-sec td:first-child { text-align: center; }
+.detail-sec tr.snap td { background: #fff5f5; color: #c53030; font-weight: 600; }
+.detail-scroll { max-height: 200px; overflow: auto; }
+#speed-chart { width: 100%; height: 120px; display: block; }
+#fit-detail pre {
+  max-height: 260px; overflow: auto; margin: 6px 0 0;
+  background: #1a202c; color: #a0aec0; border-radius: 6px;
+  padding: 8px; font-size: 11px; line-height: 1.5;
+  white-space: pre-wrap; word-break: break-all;
+}

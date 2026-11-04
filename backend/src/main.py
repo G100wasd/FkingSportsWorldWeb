@@ -13,6 +13,7 @@ from pathlib import Path
 import uvicorn
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from prompts import DEFAULT_PASSWORD, DEFAULT_USERNAME
@@ -23,6 +24,7 @@ from sportsworld.services.auth import login
 FRONTEND_DIR = Path(__file__).resolve().parents[2] / "frontend"
 
 app = FastAPI(title="NekoSportsWorld Web")
+app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")
 
 # 单用户本地应用：只保留一个登录会话；锁保护登录/登出竞态
 _lock = threading.Lock()
@@ -39,6 +41,12 @@ class AnchorBody(BaseModel):
     服务端按该数值分配打卡点，并作为拟合参考原点。"""
     lat: float
     lon: float
+
+
+class FitBody(BaseModel):
+    """拟合目标：距离（米）+ 用时（秒），由用户在前端配置。"""
+    dist: float = 2250.0
+    dur: int = 720
 
 
 def _sess_info(sess):
@@ -130,18 +138,20 @@ def api_points(body: AnchorBody):
 
 
 @app.post("/api/fit")
-def api_fit():
+def api_fit(body: FitBody):
     """阶段二：对暂存的打卡点做体育场拟合 + 轨迹生成（纯本地，不触发限流）。"""
     if _session is None:
         raise HTTPException(401, "请先登录")
     if _last_area is None:
         raise HTTPException(409, "请先获取打卡点")
+    if not (100.0 <= body.dist <= 50000.0) or not (30 <= body.dur <= 14400):
+        raise HTTPException(400, "目标距离/用时超出合理范围")
     area = _last_area
     try:
         dense, arcs, center, fit = stadium.make_stadium_ring(
             area["points_bd"], area["ref_center"], area["stadium_ring"])
         locs = track.build_track(
-            2250.0, 720, None, area["points_bd"],
+            body.dist, body.dur, None, area["points_bd"],
             fence_ring=area["stadium_ring"], ring=(dense, arcs, center))
     except Exception as e:
         traceback.print_exc()
