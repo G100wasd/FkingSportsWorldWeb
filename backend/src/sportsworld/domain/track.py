@@ -177,17 +177,27 @@ def build_track(dist, dur, seed, points_bd, fence_ring=None, ring=None):
             "radius": rad, "ptype": typ,
             "totalTime": round(t_acc), "totalDis": round(dist_acc, 4),
         })
-    # 点位吸附：40m 内最近正常点精确落位
+    # 点位吸附：按下发顺序 1->5 依次吸附，下标严格递增（保证按序经过）。
+    # 每个打卡点取"上一次吸附之后首次进入容差窗口"内的最近正常点，
+    # 即该点在轨迹上的第一次靠近（首个窗口 argmin）。
+    tol2 = _T.get("snap_tolerance_m", 40.0) ** 2
+    last_i = -1
     for plat, plng in points_bd:
-        best_i, best_d = None, 1e18
-        for i, q in enumerate(locs):
+        best_i, best_d, inside = None, 1e18, False
+        for i in range(last_i + 1, len(locs)):
+            q = locs[i]
             if q["ptype"] == -1:
                 continue
-            dd = ((q["gLat"] - plat) * MET_LAT) ** 2 + ((q["gLng"] - plng) * MET_LNG) ** 2
-            if dd < best_d:
-                best_i, best_d = i, dd
-        if best_i is not None and best_d < _T.get("snap_tolerance_m", 40.0) ** 2:
+            dd = ((q["gLat"] - plat) * MET_LAT) ** 2 + \
+                 ((q["gLng"] - plng) * MET_LNG) ** 2
+            if dd < tol2:
+                if dd < best_d:
+                    best_i, best_d, inside = i, dd, True
+            elif inside:
+                break            # 离开首个容差窗口：本次靠近的最近点已定
+        if best_i is not None:
             locs[best_i]["gLat"], locs[best_i]["gLng"] = plat, plng
             locs[best_i]["snapped"] = True
+            last_i = best_i
     clamp_to_ring(locs, fence_ring)
     return locs
