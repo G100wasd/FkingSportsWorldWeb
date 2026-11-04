@@ -79,7 +79,9 @@ def main() -> None:
     atexit.register(sess.logout)
 
     print(f"[area] 锚点 BD=({ANCHOR_LAT:.6f},{ANCHOR_LON:.6f})")
-    area = runarea.fetch_run_area(sess, ANCHOR_LAT, ANCHOR_LON, ts_ms=POINTS_TS_MS)
+    fences = runarea.fetch_fences(sess)
+    area = runarea.fetch_area_points(
+        sess, fences, ANCHOR_LAT, ANCHOR_LON, ts_ms=POINTS_TS_MS)
     for i, raw in enumerate(area["raws"]):
         meta = {k: v for k, v in raw.items() if k != "points"}
         mark = " <== 跑步区域" if i == area["stadium_idx"] else ""

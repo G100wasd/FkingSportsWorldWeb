@@ -91,6 +91,9 @@
   .btn-row button:hover { background: #edf2f7; }
   .btn-row button.active { background: #3182ce; color: #fff; border-color: #3182ce; }
   .hint { font-size: 12px; color: #718096; margin-top: 8px; line-height: 1.6; }
+  .area-link { color: #3182ce; cursor: pointer; }
+  .area-link:hover { text-decoration: underline; }
+  .area-link.sel { color: #c05621; font-weight: 700; }
 </style>
 </head>
 <body>
@@ -136,11 +139,14 @@
     <div class="card">
       <h3>跑步区域</h3>
       <div class="btn-row">
-        <button id="btn-runarea">获取打卡点并拟合轨迹</button>
+        <button id="btn-fences">① 获取围栏</button>
+        <button id="btn-points" disabled>② 获取打卡点</button>
+        <button id="btn-fit" disabled>③ 拟合轨迹</button>
       </div>
       <div class="hint" id="runarea-info">
-        以上方锚点为原点拉取实时打卡点，拟合体育场跑道并生成轨迹。<br>
-        （点位接口限流约 5 分钟 3 次）
+        ① 拉取围栏后可点击多边形选择跑步区域（默认选锚点所在围栏）；<br>
+        ② 用所选区域的 runAreaId 拉取实时打卡点（限流约 5 分钟 3 次）；<br>
+        ③ 拟合体育场跑道并生成轨迹。
       </div>
     </div>
   </div>
@@ -151,7 +157,10 @@ const $ = id => document.getElementById(id);
 const statusEl = $("status"), statusText = $("status-text");
 let map = null, sess = null, AMap_ = null;
 let locMarker = null, picking = false;
-let overlays = [];   // 每次拟合的围栏/跑道/轨迹/打卡点图层
+let overlays = [];    // 阶段一图层：围栏 + 打卡点
+let fitOverlays = []; // 阶段二图层：拟合跑道 + 轨迹 + 起终点
+let fenceOverlays = []; // 围栏多边形（可点选）
+let selAreaIdx = null;  // 用户点选的区域 idx；null=按锚点自动选
 
 function setStatus(cls, text) {
   statusEl.className = cls;
@@ -247,7 +256,7 @@ function onMapClick(e) {
   const [bLat, bLon] = gcj02ToBd09(gLat, gLon);
   $("inp-lat").value = bLat.toFixed(7);
   $("inp-lon").value = bLon.toFixed(7);
-  setMarkerAtBd(bLat, bLon, "选点");
+  map.setCenter(setMarkerAtBd(bLat, bLon, "选点"));
   togglePick(false);
 }
 
@@ -303,43 +312,107 @@ $("btn-goto").onclick = () => {
 $("inp-lat").addEventListener("input", syncMarkerFromInputs);
 $("inp-lon").addEventListener("input", syncMarkerFromInputs);
 
-/* ---------- 跑步区域：拉点 -> 拟合 -> 上图 ---------- */
+/* ---------- 跑步区域：① 围栏(可点选) -> ② 拉点 -> ③ 拟合 ---------- */
 
 function clearOverlays() {
-  overlays.forEach(o => o.setMap && o.setMap(null));
-  overlays = [];
+  overlays.concat(fitOverlays, fenceOverlays)
+          .forEach(o => o.setMap && o.setMap(null));
+  overlays = []; fitOverlays = []; fenceOverlays = [];
 }
 
-async function runArea() {
+const FENCE_STYLE = { fillColor: "#a0aec0", fillOpacity: 0.06,
+                      strokeColor: "#718096", strokeWeight: 1 };
+const FENCE_SEL_STYLE = { fillColor: "#dd6b20", fillOpacity: 0.18,
+                          strokeColor: "#c05621", strokeWeight: 2 };
+
+function ringAreaDeg(ring) {  // 鞋带公式（度²），只用于排序
+  let s = 0;
+  for (let i = 0; i < ring.length; i++) {
+    const p = ring[i], q = ring[(i + 1) % ring.length];
+    s += p[1] * q[0] - q[1] * p[0];
+  }
+  return Math.abs(s) / 2;
+}
+
+function selectArea(idx) {
+  selAreaIdx = idx;
+  fenceOverlays.forEach(f =>
+    f.setOptions(f.idx === idx ? FENCE_SEL_STYLE : FENCE_STYLE));
+  document.querySelectorAll(".area-link").forEach(el =>
+    el.classList.toggle("sel", +el.dataset.idx === idx));
+  const a = fenceOverlays.find(f => f.idx === idx);
+  if (a) $("runarea-info").innerHTML =
+    `已选区域：<b>${a.name}</b>（runAreaId=${a.rid}）<br>再点「② 获取打卡点」拉该区域实时点位。` +
+    areaListHtml();
+}
+
+let areaList = [];
+function areaListHtml() {
+  return "<br>" + areaList.map(a =>
+    `<span class="area-link${a.idx === selAreaIdx ? " sel" : ""}" data-idx="${a.idx}">` +
+    `${a.idx}: ${a.name}（runAreaId=${a.run_area_id}）</span>`).join("<br>");
+}
+
+// 面板里的区域名也可点击选择（防止小围栏被大围栏盖住点不到）
+$("runarea-info").addEventListener("click", e => {
+  const el = e.target.closest(".area-link");
+  if (el) selectArea(+el.dataset.idx);
+});
+
+// 阶段零：拉围栏，画可点选多边形（小围栏置顶，防止被大围栏盖住点不到）
+async function fetchFences() {
+  if (!sess) { setStatus("err", "请先登录"); return; }
+  $("btn-fences").disabled = true;
+  $("btn-points").disabled = true;
+  $("btn-fit").disabled = true;
+  $("runarea-info").textContent = "拉取围栏中…";
+  try {
+    const d = await api("/api/fences");
+    clearOverlays();
+    selAreaIdx = null;
+    areaList = d.areas;
+    // 面积越小 zIndex 越高：体育场等小围栏可点
+    const order = [...d.areas].sort(
+      (a, b) => ringAreaDeg(d.polygons[b.idx]) - ringAreaDeg(d.polygons[a.idx]));
+    order.forEach((a, rank) => {
+      const ring = d.polygons[a.idx];
+      const poly = new AMap_.Polygon({
+        path: ring.map(p => bdToLngLat(p[0], p[1])), map,
+        zIndex: 10 + (d.areas.length - rank),
+        ...FENCE_STYLE, extData: { idx: a.idx },
+      });
+      poly.idx = a.idx;
+      poly.name = a.name;
+      poly.rid = a.run_area_id;
+      poly.on("click", () => selectArea(a.idx));
+      fenceOverlays.push(poly);
+    });
+    map.setFitView(fenceOverlays);
+    $("btn-points").disabled = false;
+    $("runarea-info").innerHTML =
+      `共 ${d.areas.length} 个区域，点击多边形或下方行选择：` + areaListHtml();
+  } catch (e) {
+    $("runarea-info").textContent = e.message;
+  } finally {
+    $("btn-fences").disabled = false;
+  }
+}
+
+// 阶段一：拉打卡点，画红点
+async function fetchPoints() {
   if (!sess) { setStatus("err", "请先登录"); return; }
   const bd = readInputs();
   if (!bd) { $("runarea-info").textContent = "经纬度无效"; return; }
-  $("btn-runarea").disabled = true;
-  $("runarea-info").textContent = "拉取打卡点并拟合中…";
+  $("btn-points").disabled = true;
+  $("btn-fit").disabled = true;
+  $("runarea-info").textContent = "拉取打卡点中…";
   try {
-    const d = await api("/api/runarea", { lat: bd[0], lon: bd[1] });
-    clearOverlays();
-    // 围栏多边形：跑步区域高亮
-    d.polygons.forEach((ring, i) => {
-      overlays.push(new AMap_.Polygon({
-        path: ring.map(p => bdToLngLat(p[0], p[1])), map, zIndex: 10,
-        fillColor: i === d.stadium_idx ? "#38b2ac" : "#a0aec0",
-        fillOpacity: i === d.stadium_idx ? 0.15 : 0.06,
-        strokeColor: i === d.stadium_idx ? "#2c7a7b" : "#718096",
-        strokeWeight: i === d.stadium_idx ? 2 : 1,
-      }));
-    });
-    // 拟合跑道中心线（虚线）
-    overlays.push(new AMap_.Polyline({
-      path: d.track_bd.map(p => bdToLngLat(p[0], p[1])), map, zIndex: 30,
-      strokeColor: "#4a5568", strokeWeight: 2, strokeStyle: "dashed",
-      strokeOpacity: 0.9,
-    }));
-    // 模拟轨迹（实线）
-    overlays.push(new AMap_.Polyline({
-      path: d.locs.map(p => bdToLngLat(p[0], p[1])), map, zIndex: 40,
-      strokeColor: "#3182ce", strokeWeight: 2.5, strokeOpacity: 0.85,
-    }));
+    const d = await api("/api/points",
+                        { lat: bd[0], lon: bd[1], area_idx: selAreaIdx });
+    overlays.forEach(o => o.setMap && o.setMap(null));
+    overlays = [];
+    fitOverlays.forEach(o => o.setMap && o.setMap(null));
+    fitOverlays = [];
     // 打卡点红点 + 名称
     d.points.forEach((p, i) => {
       overlays.push(new AMap_.CircleMarker({
@@ -355,28 +428,63 @@ async function runArea() {
                  "text-shadow": "0 0 3px #fff, 0 0 3px #fff" },
       }));
     });
-    // 起点 / 终点
+    // 命中点位的高亮围栏
+    fenceOverlays.forEach(f =>
+      f.setOptions(f.idx === d.stadium_idx
+        ? { fillColor: "#38b2ac", fillOpacity: 0.15,
+            strokeColor: "#2c7a7b", strokeWeight: 2 }
+        : (f.idx === selAreaIdx ? FENCE_SEL_STYLE : FENCE_STYLE)));
+    $("btn-fit").disabled = false;
+    $("runarea-info").innerHTML =
+      `区域 <b>${d.area_name}</b>（runAreaId=${d.run_area_id}）下发 ${d.points.length} 个打卡点：<br>` +
+      d.points.map((p, i) => `${i + 1}. ${p.name || ""}`).join("　");
+  } catch (e) {
+    $("runarea-info").textContent = e.message;
+  } finally {
+    $("btn-points").disabled = false;
+  }
+}
+
+// 阶段二：拟合体育场 + 生成轨迹，画虚线跑道 / 蓝轨迹 / 起终点
+async function doFit() {
+  $("btn-fit").disabled = true;
+  $("runarea-info").textContent = "拟合体育场跑道并生成轨迹中…";
+  try {
+    const d = await api("/api/fit");
+    fitOverlays.forEach(o => o.setMap && o.setMap(null));
+    fitOverlays = [];
+    fitOverlays.push(new AMap_.Polyline({
+      path: d.track_bd.map(p => bdToLngLat(p[0], p[1])), map, zIndex: 30,
+      strokeColor: "#4a5568", strokeWeight: 2, strokeStyle: "dashed",
+      strokeOpacity: 0.9,
+    }));
+    fitOverlays.push(new AMap_.Polyline({
+      path: d.locs.map(p => bdToLngLat(p[0], p[1])), map, zIndex: 40,
+      strokeColor: "#3182ce", strokeWeight: 2.5, strokeOpacity: 0.85,
+    }));
     const st = d.locs[0], en = d.locs[d.locs.length - 1];
-    overlays.push(new AMap_.Marker({
+    fitOverlays.push(new AMap_.Marker({
       position: bdToLngLat(st[0], st[1]), map, zIndex: 70,
       label: { content: "起点", direction: "top" },
     }));
-    overlays.push(new AMap_.Marker({
+    fitOverlays.push(new AMap_.Marker({
       position: bdToLngLat(en[0], en[1]), map, zIndex: 70,
       label: { content: "终点", direction: "top" },
     }));
-    map.setFitView(overlays);
     const f = d.fit;
     $("runarea-info").innerHTML =
-      `打卡点 ${d.points.length} 个 | 直道 ${f.straight.toFixed(0)}m + 半圆 r=${f.radius.toFixed(0)}m | 周长 ${f.perimeter.toFixed(0)}m<br>` +
+      `直道 ${f.straight.toFixed(0)}m + 半圆 r=${f.radius.toFixed(0)}m | 周长 ${f.perimeter.toFixed(0)}m | 轨迹 ${d.locs.length} 点<br>` +
       `误差 均=${f.mean_err.toFixed(1)}m 最大=${f.max_err.toFixed(1)}m | 边界余量 ${f.fence_margin.toFixed(1)}m`;
   } catch (e) {
     $("runarea-info").textContent = e.message;
   } finally {
-    $("btn-runarea").disabled = false;
+    $("btn-fit").disabled = false;
   }
 }
-$("btn-runarea").onclick = runArea;
+
+$("btn-fences").onclick = fetchFences;
+$("btn-points").onclick = fetchPoints;
+$("btn-fit").onclick = doFit;
 
 /* ---------- 登录流程 ---------- */
 

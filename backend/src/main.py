@@ -88,19 +88,71 @@ def api_logout():
     return _sess_info(None)
 
 
-@app.post("/api/runarea")
-def api_runarea(body: AnchorBody):
-    """以锚点确定跑步区域：拉围栏+实时打卡点 -> 体育场拟合 -> 轨迹生成。
+_last_fences = None  # 最近一次拉取的围栏数据（限流外，复用于拉点）
+_last_area = None    # 最近一次拉取的跑步区域（供 /api/fit 复用，避免重复拉点）
 
-    返回前端画图所需的全部 BD-09 数据（前端自行转 GCJ-02 上图）。
-    """
+
+@app.post("/api/fences")
+def api_fences():
+    """阶段零：拉围栏并整理可点选的区域列表（每个围栏自带 runAreaId）。"""
+    global _last_fences
     if _session is None:
         raise HTTPException(401, "请先登录")
     try:
-        area = runarea.fetch_run_area(_session, body.lat, body.lon)
+        _last_fences = runarea.fetch_fences(_session)
     except Exception as e:
         traceback.print_exc()
-        raise HTTPException(502, f"拉取围栏/打卡点失败: {e}")
+        raise HTTPException(502, f"拉取围栏失败: {e}")
+    return {"polygons": _last_fences["polygons"],
+            "areas": _last_fences["areas"]}
+
+
+class PointsBody(AnchorBody):
+    area_idx: int | None = None   # 前端点选的区域；None=按锚点所在围栏自动选
+
+
+@app.post("/api/points")
+def api_points(body: PointsBody):
+    """阶段一：用所选区域的 runAreaId 拉实时打卡点。"""
+    global _last_fences, _last_area
+    if _session is None:
+        raise HTTPException(401, "请先登录")
+    if _last_fences is None:
+        try:
+            _last_fences = runarea.fetch_fences(_session)
+        except Exception as e:
+            traceback.print_exc()
+            raise HTTPException(502, f"拉取围栏失败: {e}")
+    try:
+        _last_area = runarea.fetch_area_points(
+            _session, _last_fences, body.lat, body.lon, area_idx=body.area_idx)
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(502, f"拉取打卡点失败: {e}")
+    area = _last_area
+    sel = next((a for a in area["areas"] if a["idx"] == area["area_idx"]), None)
+    return {
+        "polygons": area["polygons"],
+        "stadium_idx": area["stadium_idx"],
+        "area_idx": area["area_idx"],
+        "area_name": sel["name"] if sel else "(默认区域)",
+        "run_area_id": area["area_run_area_id"],
+        "ref_center": area["ref_center"],
+        "points": [{"name": p.get("pointName"), "isFixed": p.get("isFixed"),
+                    "lat": p.get("lat"), "lon": p.get("lon")}
+                   for p in area["points"]],
+        "points_bd": area["points_bd"],
+    }
+
+
+@app.post("/api/fit")
+def api_fit():
+    """阶段二：对暂存的打卡点做体育场拟合 + 轨迹生成（纯本地，不触发限流）。"""
+    if _session is None:
+        raise HTTPException(401, "请先登录")
+    if _last_area is None:
+        raise HTTPException(409, "请先获取打卡点")
+    area = _last_area
     try:
         dense, arcs, center, fit = stadium.make_stadium_ring(
             area["points_bd"], area["ref_center"], area["stadium_ring"])
@@ -111,13 +163,6 @@ def api_runarea(body: AnchorBody):
         traceback.print_exc()
         raise HTTPException(502, f"拟合/轨迹生成失败: {e}")
     return {
-        "polygons": area["polygons"],
-        "stadium_idx": area["stadium_idx"],
-        "ref_center": area["ref_center"],
-        "points": [{"name": p.get("pointName"), "isFixed": p.get("isFixed"),
-                    "lat": p.get("lat"), "lon": p.get("lon")}
-                   for p in area["points"]],
-        "points_bd": area["points_bd"],
         "track_bd": fit["track_bd"],
         "locs": [[q["gLat"], q["gLng"]] for q in locs],
         "fit": {

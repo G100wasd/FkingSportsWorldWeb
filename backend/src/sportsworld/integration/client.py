@@ -1,11 +1,27 @@
 """通用请求封装：body = 信封(明文, insert)，headerSign = 信封(header, observed)，
 响应两层解密到业务 JSON；同一 EnvelopeSession 复用同一 keyDataFour。"""
 
+import time
+
 import httpx
 
 from .decrypt import decrypt_response, derive_paes_key
 from .envelope import EnvelopeSession, build_envelope, now_ms
 from .header import IOS_APP_VERSION, UA_IOS, build_ios_header
+
+
+def _send_with_retry(client: httpx.Client, method: str, url: str,
+                     headers: dict, content: str, retries: int = 2):
+    """网络层错误（连接/读写超时、断连）自动重发；业务错误不重试。"""
+    for attempt in range(retries + 1):
+        try:
+            return client.request(method, url, headers=headers,
+                                  content=content.encode("utf-8"))
+        except httpx.TransportError as e:
+            if attempt >= retries:
+                raise
+            print(f"[net] {type(e).__name__}，{1.5}s 后重试（{attempt + 1}/{retries}）")
+            time.sleep(1.5)
 
 
 def envelope_request(
@@ -36,7 +52,7 @@ def envelope_request(
         "headerSign": header_env,
     }
     headers.update(extra_headers or {})
-    resp = client.request(method, url, headers=headers, content=body_env.encode("utf-8"))
+    resp = _send_with_retry(client, method, url, headers, body_env)
     raw = resp.content
     key = derive_paes_key(*kd)
     business = decrypt_response(raw, key)
