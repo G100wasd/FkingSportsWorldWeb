@@ -144,6 +144,7 @@
         <button id="btn-points">获取打卡点</button>
         <button id="btn-fit" disabled>拟合轨迹</button>
         <button id="btn-edit" disabled>调整轨迹</button>
+        <button id="btn-submit" disabled>提交记录</button>
       </div>
       <div class="row" id="ctrl-row" style="display:none;margin-bottom:0;">
         <label>控制点数</label>
@@ -154,6 +155,11 @@
         <label>点权重</label>
         <input id="ctrl-weight" type="range" min="0" max="1" step="0.05" value="0.8" style="flex:1;padding:0;">
         <span id="ctrl-weight-val" style="font-size:12px;width:26px;text-align:right;">0.8</span>
+      </div>
+      <div class="row" id="ctrl-rrow" style="display:none;margin-bottom:0;">
+        <label>影响半径</label>
+        <input id="ctrl-radius" type="range" min="5" max="50" step="1" value="12" style="flex:1;padding:0;">
+        <span id="ctrl-radius-val" style="font-size:12px;width:30px;text-align:right;">12m</span>
       </div>
       <div class="hint" id="runarea-info">
         「获取打卡点」：后台自动拉围栏、申请计分跑并按锚点取实时点位<br>
@@ -181,6 +187,7 @@ let trackSegs = [];   // 分圈轨迹的 polyline {pl,i0,i1}
 let ctrls = [];       // {locIdx,anchor,pos:[lat,lon],marker} 可拖控制点
 let ctrlTotal = 8;    // 控制点总数（滑块可调，上限 10）
 let ctrlWeight = 0.8; // 点权重：0=无影响，1=路径必过该点
+let ctrlRadius = 12;  // 影响半径（米）：窗外轨迹严格不受影响
 let editing = false;
 
 function setStatus(cls, text) {
@@ -372,7 +379,16 @@ async function fetchPoints() {
     clearCtrls();
     drawPoints(d);
     map.setFitView(overlays);
+    // 新点位让旧轨迹作废：解锁拟合/调整入口，收回提交与编辑态
+    trackLocs = []; origLocs = []; lapIdx = []; snapIdx = [];
     $("btn-fit").disabled = false;
+    $("btn-edit").disabled = false;
+    $("btn-submit").disabled = true;
+    editing = false;
+    $("btn-edit").textContent = "调整轨迹";
+    $("btn-edit").classList.remove("active");
+    ["ctrl-row", "ctrl-wrow", "ctrl-rrow"]
+      .forEach(id => $(id).style.display = "none");
     const sc = d.scoring;
     const scTxt = sc && sc.ok
       ? `计分跑已开启（minDistance=${sc.minDistance}）`
@@ -427,7 +443,7 @@ function renderFit(d, retried) {
     label: { content: "终点", direction: "top" },
   }));
   const f = d.fit;
-  $("btn-edit").disabled = !d.locs.length;
+  $("btn-submit").disabled = !d.locs.length;
   $("runarea-info").innerHTML =
     (retried ? `<span style="color:#b7791f">重新拉点后拟合成功：</span><br>` : "") +
     `直道 ${f.straight.toFixed(0)}m + 半圆 r=${f.radius.toFixed(0)}m | 周长 ${f.perimeter.toFixed(0)}m | 轨迹 ${d.locs.length} 点<br>` +
@@ -441,17 +457,16 @@ function fitError(msg) {
 
 /* ---------- 轨迹手动调整：控制点=次级打卡点 ----------
    拖一个控制点 = 给该位置加一个"软必过点"：
-   空间上附近的所有轨迹点（各圈重叠处一起）按高斯衰减位移，
-   中心权重 0.8（小于真打卡点的 1.0），打卡锚点附近渐隐到 0。 */
-
-const CTRL_SIGMA = 18;    // 影响半径（米）：越大拉扯范围越宽
+   空间上附近的所有轨迹点（各圈重叠处一起）按余弦窗位移，
+   半径外严格归零 -> 绕行结束后轨迹立刻回到 1 道；
+   中心权重=ctrlWeight（< 真打卡点的 1.0），打卡锚点附近渐隐到 0。 */
 
 function metersBetween(a, b) {
   const fLng = MET_L * Math.cos(a[0] * Math.PI / 180);
   return Math.hypot((b[0] - a[0]) * MET_L, (b[1] - a[1]) * fLng);
 }
 
-// 由全部控制点重算中线：trackLocs = origLocs + Σ 把手位移×高斯权重
+// 由全部控制点重算中线：trackLocs = origLocs + Σ 把手位移×余弦窗权重
 function recomputeTrack() {
   const n = trackLocs.length;
   for (let i = 0; i < n; i++) {
@@ -460,8 +475,9 @@ function recomputeTrack() {
     if (tw > 0) {
       for (const c of ctrls) {
         const d = metersBetween(origLocs[i], c.anchor);
-        if (d > CTRL_SIGMA * 3) continue;    // 远处无影响，省计算
-        const w = ctrlWeight * Math.exp(-((d / CTRL_SIGMA) ** 2)) * tw;
+        if (d >= ctrlRadius) continue;   // 窗外严格无影响：绕行有硬边界
+        const w = ctrlWeight * 0.5 *
+                  (1 + Math.cos(Math.PI * d / ctrlRadius)) * tw;
         dy += (c.pos[0] - c.anchor[0]) * w;
         dx += (c.pos[1] - c.anchor[1]) * w;
       }
@@ -609,16 +625,30 @@ $("ctrl-weight").oninput = e => {
   if (editing) { recomputeTrack(); updateCtrlMarkers(); updateTrackInfo(); }
 };
 
+$("ctrl-radius").oninput = e => {
+  ctrlRadius = +e.target.value;
+  $("ctrl-radius-val").textContent = e.target.value + "m";
+  if (editing) { recomputeTrack(); updateCtrlMarkers(); updateTrackInfo(); }
+};
+
 $("btn-edit").onclick = () => {
+  if (!trackLocs.length) {
+    $("runarea-info").innerHTML =
+      `<span style="color:#e53e3e">请先「拟合轨迹」生成轨迹后再调整。</span>`;
+    return;
+  }
   editing = !editing;
   $("btn-edit").classList.toggle("active", editing);
   $("btn-edit").textContent = editing ? "完成调整" : "调整轨迹";
   $("ctrl-row").style.display = editing ? "" : "none";
   $("ctrl-wrow").style.display = editing ? "" : "none";
+  $("ctrl-rrow").style.display = editing ? "" : "none";
   if (editing) {
     buildControls();
     $("runarea-info").innerHTML =
-      `<span style="color:#b7791f">拖动蓝色圆点调整轨迹；` +
+      `<span style="color:#e53e3e">⚠ 实验性功能：手动调整尚在调试，` +
+      `效果可能与预期不符，必要时需重新拟合轨迹，请谨慎使用。</span><br>` +
+      `<span style="color:#b7791f">拖动彩色圆点调整轨迹；` +
       `红色打卡点（${snapIdx.length} 个锚点）保持必过。</span>`;
   } else {
     clearCtrls();
@@ -644,6 +674,7 @@ async function refetchAndRefit(prevErr, attempt) {
     }
     clearOverlays();
     clearCtrls();
+    trackLocs = []; origLocs = []; lapIdx = []; snapIdx = [];
     drawPoints(d);
     try {
       renderFit(await api("/api/fit"), true);
@@ -674,6 +705,11 @@ async function doFit() {
 
 $("btn-points").onclick = fetchPoints;
 $("btn-fit").onclick = doFit;
+$("btn-submit").onclick = () => {
+  $("runarea-info").innerHTML =
+    `<span style="color:#b7791f">提交功能尚未实现：跑步记录提交协议` +
+    `（轨迹字段/签名/OBS 上传）仍在逆向中。</span>`;
+};
 
 /* ---------- 登录流程 ---------- */
 
