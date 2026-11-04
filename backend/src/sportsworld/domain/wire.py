@@ -6,12 +6,17 @@ build_laps: 每 1000m 一圈（avgPace 秒/km、avgStride 厘米、末圈 isFull
 five_point_*: 五点打卡回执（提交体 fivePointJson / OBS fixed_point_json 同源）
 """
 
+import base64
+import datetime as _dt
+import gzip
 import json
 import math
 
 from ..services import geo   # wire.rs 同样跨层用 api::fence::point_xy
 
 MET_LAT = 111_132.0
+_CST = _dt.timezone(_dt.timedelta(hours=8))
+_COMPACT = dict(separators=(",", ":"), ensure_ascii=False)
 
 
 def _r0(x):
@@ -165,3 +170,56 @@ def validate_five_point_wrapper(wrapper):
            (not p.get("glat") and not p.get("glon")):
             raise ValueError("五点轨迹包含缺失坐标")
     return True
+
+
+# ── OBS 对象（wire.rs::conv_point / build_obs_object / obs_keys）──
+
+def _gz(data: bytes) -> str:
+    return base64.b64encode(gzip.compress(data)).decode("ascii")
+
+
+def conv_point(p, start_ms):
+    """gen 点 → OBS 28 键协议点（gLat/gLng 由 BD-09 转 GCJ-02）。"""
+    glat, glng = geo.bd09_to_gcj02(p["gLat"], p["gLng"])
+    return {
+        "avgSpeed": p["avgSpeed"], "bdA": p["bdA"], "bdD": p["bdD"],
+        "bdG": p["bdG"], "bdS": p["bdS"], "coorType": "gcj02",
+        "count": p["count"], "dtr": 0.0, "flag": start_ms,
+        "gLat": round(glat, 7), "gLng": round(glng, 7),
+        "gainTime": p["gainTime"], "id": p["id"],
+        "lat": -1.0, "lng": -1.0,
+        "locType": p["locType"], "locationId": "",
+        "queueNum": p["queueNum"], "radius": p["radius"],
+        "speed": p["speed"], "state": p["state"], "steps": p["steps"],
+        "stepDistance": 0.0, "totalDis": p["totalDis"],
+        "totalTime": p["totalTime"], "type": p["type"],
+        "validDis": p["validDis"], "validTime": p["validTime"],
+    }
+
+
+def build_obs_object(track, rrid, run_uuid, uid, five_point_json):
+    """10 键 OBS 对象（值均 gzip+base64；segment_json/runFaceCheck 为空串）。"""
+    pts = [conv_point(p, track["startTime"]) for p in track["locations"]]
+    run_wrap = {"allLocJson": json.dumps(pts, **_COMPACT), "useZip": False}
+    sp, stf = build_windows(track, rrid)
+    laps = build_laps(track, track["startTime"])
+    return {
+        "rrid": _gz(str(rrid).encode("utf-8")),
+        "uuid": _gz(run_uuid.encode("utf-8")),
+        "uid": _gz(str(uid).encode("utf-8")),
+        "run_data": _gz(json.dumps(run_wrap, **_COMPACT).encode("utf-8")),
+        "fixed_point_json": _gz(five_point_json.encode("utf-8")),
+        "segment_json": _gz(b""),
+        "speed_json": _gz(json.dumps(sp, **_COMPACT).encode("utf-8")),
+        "step_freq_json": _gz(json.dumps(stf, **_COMPACT).encode("utf-8")),
+        "laps_json": _gz(json.dumps(laps, **_COMPACT).encode("utf-8")),
+        "runFaceCheck": _gz(b""),
+    }
+
+
+def obs_keys(track, rrid, run_uuid):
+    """双 objectKey：按起跑时刻(CST)小时目录 + 按 rrid 分桶目录。"""
+    t0 = _dt.datetime.fromtimestamp(
+        track["startTime"] / 1000, tz=_CST).strftime("%Y%m%d%H")
+    return [f"run_data/{t0}/{run_uuid}.json",
+            f"run_data/{rrid // 1_000_000}/{rrid}.json"]

@@ -8,6 +8,7 @@
 import datetime as dt
 import json
 import threading
+import time
 import traceback
 from pathlib import Path
 
@@ -19,7 +20,7 @@ from pydantic import BaseModel
 
 from sportsworld.config import CFG, load as cfg_load, save as cfg_save
 from sportsworld.domain import stadium, track, wire
-from sportsworld.services import runarea, submit
+from sportsworld.services import obs, records, runarea, submit
 from sportsworld.services.auth import default_identity, login
 
 FRONTEND_DIR = Path(__file__).resolve().parents[2] / "frontend"
@@ -51,10 +52,10 @@ def _receipt_for(run_uuid: str):
     return (cfg_load().get("receipts") or {}).get(run_uuid)
 
 
-def _save_receipt(run_uuid: str, rrid: int):
+def _save_receipt(run_uuid: str, rrid: int, obs_ok: int = 0):
     cfg = cfg_load()
     cfg.setdefault("receipts", {})[run_uuid] = {
-        "rrid": rrid, "username": _username,
+        "rrid": rrid, "username": _username, "obs_ok": obs_ok,
         "ts": int(dt.datetime.now().timestamp() * 1000)}
     cfg_save(cfg)
 
@@ -238,10 +239,12 @@ def api_fit(body: FitBody):
         face_check=_RUN.get("face_check", 0),
         five_point_json=five_point,
         address=_RUN.get("address", ""))
-    # 提交载荷整份暂存：/api/submit 必须原样重放同一 uuid/body（runef 依赖）
+    # 提交载荷整份暂存：/api/submit 必须原样重放同一 uuid/body（runef 依赖）；
+    # track/five_point 供 OBS 对象复用（fixed_point_json 与提交体同源）
     _last_fit = {"body": record_body, "run_uuid": run_uuid,
                  "policy_ts": scoring.get("policy_ts") or "",
-                 "username": _username}
+                 "username": _username, "track": trk,
+                 "five_point": five_point}
     return {
         "track_bd": fit["track_bd"],
         "locs": [[q["gLat"], q["gLng"], int(q["totalDis"] // perim)]
@@ -301,7 +304,8 @@ def api_submit():
     run_uuid = _last_fit["run_uuid"]
     old = _receipt_for(run_uuid)
     if old:
-        return {"rrid": old["rrid"], "uuid": run_uuid, "already": True}
+        return {"rrid": old["rrid"], "uuid": run_uuid, "already": True,
+                "obs_ok": old.get("obs_ok", 0), "obs_total": 2}
     try:
         result = submit.submit_record(
             _session, _last_fit["body"], run_uuid,
@@ -313,9 +317,35 @@ def api_submit():
     except Exception as e:
         traceback.print_exc()
         raise HTTPException(502, f"提交失败: {e}")
-    _save_receipt(run_uuid, result["rrid"])
-    return {"rrid": result["rrid"], "uuid": run_uuid, "already": False,
-            "complete": result.get("complete")}
+    rrid = result["rrid"]
+
+    # OBS 上传（双 key）：失败只降级不影响已落库的记录
+    obs_ok, obs_keys = 0, []
+    try:
+        time.sleep(1)
+        obj = wire.build_obs_object(
+            _last_fit["track"], rrid, run_uuid, _session.uid,
+            _last_fit["five_point"])
+        obs_keys = wire.obs_keys(_last_fit["track"], rrid, run_uuid)
+        payload = json.dumps(obj, separators=(",", ":"),
+                             ensure_ascii=False).encode("utf-8")
+        obs_ok = obs.upload_both_keys(_session, obs_keys, payload)
+    except Exception:
+        traceback.print_exc()
+    _save_receipt(run_uuid, rrid, obs_ok)
+
+    # 详情验证：能回读到该 rrid 即记 verified
+    verified = False
+    try:
+        time.sleep(2)
+        verified = bool(records.fetch_one_record(_session, rrid))
+    except Exception:
+        traceback.print_exc()
+
+    return {"rrid": rrid, "uuid": run_uuid, "already": False,
+            "complete": result.get("complete"),
+            "obs_ok": obs_ok, "obs_total": len(obs_keys),
+            "verified": verified}
 
 
 @app.on_event("shutdown")

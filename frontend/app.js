@@ -965,10 +965,15 @@ $("btn-submit").onclick = async () => {
   try {
     const r = await api("/api/submit", {});
     $("btn-submit").textContent = "✓ 已提交";
+    const obsTxt = r.obs_ok != null
+      ? `｜OBS ${r.obs_ok}/${r.obs_total}` +
+        (r.obs_ok >= r.obs_total ? "" : "（轨迹可能不完整）")
+      : "";
+    const verTxt = r.verified ? "｜服务端已回读" : "";
     $("runarea-info").innerHTML =
       `<span style="color:#38a169">` +
       `${r.already ? "该轨迹此前已提交过：" : "√ 提交成功 "}` +
-      `rrid=${r.rrid} uuid=${r.uuid}</span>`;
+      `rrid=${r.rrid} uuid=${r.uuid}${obsTxt}${verTxt}</span>`;
   } catch (e) {
     $("btn-submit").disabled = false;
     $("btn-submit").textContent = "提交记录";
