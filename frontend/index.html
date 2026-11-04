@@ -143,11 +143,18 @@
       <div class="btn-row">
         <button id="btn-points">获取打卡点</button>
         <button id="btn-fit" disabled>拟合轨迹</button>
+        <button id="btn-edit" disabled>调整轨迹</button>
+      </div>
+      <div class="row" id="ctrl-row" style="display:none;margin-bottom:0;">
+        <label>控制点数</label>
+        <input id="ctrl-count" type="range" min="4" max="40" value="12" style="flex:1;padding:0;">
+        <span id="ctrl-count-val" style="font-size:12px;width:22px;text-align:right;">12</span>
       </div>
       <div class="hint" id="runarea-info">
         「获取打卡点」：后台自动拉围栏、申请计分跑并按锚点取实时点位<br>
         （服务端限流约 5 分钟 3 次）；<br>
-        「拟合轨迹」：对下发的打卡点拟合体育场跑道并生成模拟轨迹。
+        「拟合轨迹」：对下发的打卡点拟合体育场跑道并生成模拟轨迹；<br>
+        「调整轨迹」：显示控制点，拖动蓝点微调轨迹（红色打卡点保持必过）。
       </div>
     </div>
   </div>
@@ -160,6 +167,12 @@ let map = null, sess = null, AMap_ = null;
 let locMarker = null, picking = false;
 let overlays = [];    // 阶段一图层：打卡点
 let fitOverlays = []; // 阶段二图层：拟合跑道 + 轨迹 + 起终点
+let trackLocs = [];   // 当前轨迹 BD [[lat,lon],...]（可被控制点编辑）
+let snapIdx = [];     // 打卡点吸附的轨迹下标 = 固定锚点
+let trackSegs = [];   // 渐变轨迹的分段 polyline
+let ctrls = [];       // {seg, param, pos:[lat,lon], marker} 可拖控制点
+let ctrlTotal = 12;   // 控制点总数（滑块可调）
+let editing = false;
 
 function setStatus(cls, text) {
   statusEl.className = cls;
@@ -347,6 +360,7 @@ async function fetchPoints() {
   try {
     const d = await api("/api/points", { lat: c[0], lon: c[1] });
     clearOverlays();
+    clearCtrls();
     drawPoints(d);
     map.setFitView(overlays);
     $("btn-fit").disabled = false;
@@ -370,6 +384,10 @@ const MAX_REFIT = 3;   // 无可行解时自动 重拉点->重拟合 的最大�
 
 // 拟合跑道虚线 + 蓝轨迹 + 起终点上图
 function renderFit(d, retried) {
+  clearCtrls();
+  trackLocs = d.locs.map(p => [p[0], p[1]]);
+  snapIdx = (d.snap_idx || []).slice().sort((a, b) => a - b)
+                     .filter((v, i, a) => i === 0 || v !== a[i - 1]);
   fitOverlays.forEach(o => o.setMap && o.setMap(null));
   fitOverlays = [];
   fitOverlays.push(new AMap_.Polyline({
@@ -377,10 +395,7 @@ function renderFit(d, retried) {
     strokeColor: "#4a5568", strokeWeight: 2, strokeStyle: "dashed",
     strokeOpacity: 0.9,
   }));
-  fitOverlays.push(new AMap_.Polyline({
-    path: d.locs.map(p => bdToLngLat(p[0], p[1])), map, zIndex: 40,
-    strokeColor: "#3182ce", strokeWeight: 2.5, strokeOpacity: 0.85,
-  }));
+  drawTrackGradient();
   const st = d.locs[0], en = d.locs[d.locs.length - 1];
   fitOverlays.push(new AMap_.Marker({
     position: bdToLngLat(st[0], st[1]), map, zIndex: 70,
@@ -391,15 +406,183 @@ function renderFit(d, retried) {
     label: { content: "终点", direction: "top" },
   }));
   const f = d.fit;
+  $("btn-edit").disabled = snapIdx.length < 2;
   $("runarea-info").innerHTML =
     (retried ? `<span style="color:#b7791f">重新拉点后拟合成功：</span><br>` : "") +
     `直道 ${f.straight.toFixed(0)}m + 半圆 r=${f.radius.toFixed(0)}m | 周长 ${f.perimeter.toFixed(0)}m | 轨迹 ${d.locs.length} 点<br>` +
-    `误差 均=${f.mean_err.toFixed(1)}m 最大=${f.max_err.toFixed(1)}m | 边界余量 ${f.fence_margin.toFixed(1)}m`;
+    `误差 均=${f.mean_err.toFixed(1)}m 最大=${f.max_err.toFixed(1)}m | 边界余量 ${f.fence_margin.toFixed(1)}m | 锚点 ${snapIdx.length} 个`;
+  if (editing) buildControls();
 }
 
 function fitError(msg) {
   $("runarea-info").innerHTML = `<span style="color:#e53e3e">${msg}</span>`;
 }
+
+/* ---------- 轨迹手动调整：打卡点=固定锚点，锚点间布可拖控制点 ---------- */
+
+// centripetal Catmull-Rom：过 nodes 全部节点，输出 count 个密点（首尾精确）
+function crPoint(p0, p1, p2, p3, t) {
+  const d = (a, b) => Math.hypot(b[0] - a[0], b[1] - a[1]) + 1e-12;
+  const t0 = 0, t1 = t0 + Math.sqrt(d(p0, p1)),
+        t2 = t1 + Math.sqrt(d(p1, p2)), t3 = t2 + Math.sqrt(d(p2, p3));
+  const tt = t1 + (t2 - t1) * t;
+  const L = (pa, pb, ta, tb) =>
+    [(pa[0] * (tb - tt) + pb[0] * (tt - ta)) / (tb - ta),
+     (pa[1] * (tb - tt) + pb[1] * (tt - ta)) / (tb - ta)];
+  const A1 = L(p0, p1, t0, t1), A2 = L(p1, p2, t1, t2), A3 = L(p2, p3, t2, t3);
+  return L(L(A1, A2, t0, t2), L(A2, A3, t1, t3), t1, t2);
+}
+
+function crResample(nodes, count) {
+  const M = nodes.length, pts = [nodes[0]];
+  const segLen = []; let tot = 0;
+  for (let i = 0; i < M - 1; i++) {
+    const l = Math.hypot(nodes[i + 1][0] - nodes[i][0],
+                         nodes[i + 1][1] - nodes[i][1]) + 1e-12;
+    segLen.push(l); tot += l;
+  }
+  let left = count - 1;
+  for (let i = 0; i < M - 1; i++) {
+    const ni = (i === M - 2) ? left : Math.max(1, Math.round(left * segLen[i] / tot));
+    const p0 = nodes[Math.max(0, i - 1)], p1 = nodes[i],
+          p2 = nodes[i + 1], p3 = nodes[Math.min(M - 1, i + 2)];
+    for (let j = 1; j <= ni; j++) pts.push(crPoint(p0, p1, p2, p3, j / ni));
+    left -= ni; tot -= segLen[i];
+  }
+  return pts;
+}
+
+// 起点->终点 渐变：高德 polyline 不支持逐顶点渐变，拆成小段拼色
+const GRAD_A = [72, 187, 120], GRAD_B = [49, 130, 206];   // 绿 -> 蓝
+const TRACK_SEGS = 90;
+function gradColor(t) {
+  const c = GRAD_A.map((a, i) => Math.round(a + (GRAD_B[i] - a) * t));
+  return `rgb(${c[0]},${c[1]},${c[2]})`;
+}
+function drawTrackGradient() {
+  const n = trackLocs.length, per = Math.ceil(n / TRACK_SEGS);
+  trackSegs = [];
+  for (let i = 0; i < n - 1; i += per) {
+    const pl = new AMap_.Polyline({
+      path: trackLocs.slice(i, i + per + 1).map(p => bdToLngLat(p[0], p[1])),
+      map, zIndex: 40, strokeWeight: 2.5, strokeOpacity: 0.9,
+      strokeColor: gradColor(i / (n - 1)),
+      lineJoin: "round", lineCap: "round",
+    });
+    trackSegs.push(pl);
+    fitOverlays.push(pl);
+  }
+}
+function redrawTrack() {
+  const n = trackLocs.length, per = Math.ceil(n / TRACK_SEGS);
+  trackSegs.forEach((pl, k) => {
+    const i = k * per;
+    pl.setPath(trackLocs.slice(i, i + per + 1)
+                 .map(p => bdToLngLat(p[0], p[1])));
+  });
+}
+
+// 段 k：锚点 snapIdx[k] -> snapIdx[k+1]（循环），返回 {a, len(密点数跨度)}
+function segRange(k) {
+  const n = trackLocs.length;
+  const a = snapIdx[k], b = snapIdx[(k + 1) % snapIdx.length];
+  return { a, len: (b - a + n) % n };
+}
+
+// 用当前控制点重建第 k 段密点（锚点位置精确保持）
+function rebuildSegment(k) {
+  const { a, len } = segRange(k);
+  if (len < 2) return;
+  const nodes = [trackLocs[a]];
+  ctrls.filter(c => c.seg === k).sort((x, y) => x.param - y.param)
+       .forEach(c => nodes.push(c.pos));
+  nodes.push(trackLocs[(a + len) % trackLocs.length]);
+  const pts = crResample(nodes, len + 1);
+  const n = trackLocs.length;
+  for (let i = 0; i <= len; i++) trackLocs[(a + i) % n] = pts[i];
+  redrawTrack();
+}
+
+// 把手圆点：染成它所在轨迹位置的渐变色
+function ctrlHtml(frac) {
+  return `<div style="width:12px;height:12px;border-radius:50%;` +
+    `background:${gradColor(frac)};border:2px solid #fff;` +
+    `box-shadow:0 0 4px rgba(0,0,0,.5)"></div>`;
+}
+
+// 按滑块总数在锚点段间按比例布控制点（每段至少 1 个）
+function buildControls() {
+  clearCtrls();
+  const n = trackLocs.length;
+  if (snapIdx.length < 2 || n < 10) return;
+  for (let k = 0; k < snapIdx.length; k++) {
+    const { a, len } = segRange(k);
+    const m = Math.max(1, Math.round(ctrlTotal * len / n));
+    for (let j = 1; j <= m; j++) {
+      const param = j / (m + 1);
+      const locIdx = (a + Math.round(len * param)) % n;
+      const c = { seg: k, param, pos: trackLocs[locIdx].slice() };
+      c.marker = new AMap_.Marker({
+        position: bdToLngLat(c.pos[0], c.pos[1]), map, zIndex: 85,
+        draggable: true, cursor: "move",
+        content: ctrlHtml(locIdx / n), offset: new AMap_.Pixel(-6, -6),
+      });
+      c.marker.on("dragend", e => {
+        const g = e.lnglat;
+        c.pos = gcj02ToBd09(g.getLat(), g.getLng());
+        rebuildSegment(k);
+        // 把手落在 CR 节点上，显示位置即拖放位置；仅同步里程
+        updateTrackInfo();
+      });
+      ctrls.push(c);
+    }
+  }
+}
+
+function clearCtrls() {
+  ctrls.forEach(c => c.marker && c.marker.setMap(null));
+  ctrls = [];
+}
+
+// 编辑后重新估算轨迹总长（BD 经纬度 -> 米）
+function trackMeters() {
+  const fLat = 111195, fLng = 111195 * Math.cos(22.9 * Math.PI / 180);
+  let s = 0;
+  for (let i = 1; i < trackLocs.length; i++) {
+    const a = trackLocs[i - 1], b = trackLocs[i];
+    s += Math.hypot((b[0] - a[0]) * fLat, (b[1] - a[1]) * fLng);
+  }
+  return s;
+}
+
+function updateTrackInfo() {
+  $("runarea-info").innerHTML =
+    `<span style="color:#b7791f">轨迹已手动调整</span><br>` +
+    `调整后里程约 ${trackMeters().toFixed(0)}m | 锚点 ${snapIdx.length} 个保持必过<br>` +
+    `注意：调整只改形状，未重算时间/配速`;
+}
+
+$("ctrl-count").oninput = e => {
+  ctrlTotal = +e.target.value;
+  $("ctrl-count-val").textContent = e.target.value;
+  if (editing) buildControls();
+};
+
+$("btn-edit").onclick = () => {
+  editing = !editing;
+  $("btn-edit").classList.toggle("active", editing);
+  $("btn-edit").textContent = editing ? "完成调整" : "调整轨迹";
+  $("ctrl-row").style.display = editing ? "" : "none";
+  if (editing) {
+    buildControls();
+    $("runarea-info").innerHTML =
+      `<span style="color:#b7791f">拖动蓝色圆点调整轨迹；` +
+      `红色打卡点（${snapIdx.length} 个锚点）保持必过。</span>`;
+  } else {
+    clearCtrls();
+    updateTrackInfo();
+  }
+};
 
 // 拟合无可行解 -> 自动重拉打卡点 -> 重拟合（直到成功或拉点失败）
 async function refetchAndRefit(prevErr, attempt) {
@@ -418,6 +601,7 @@ async function refetchAndRefit(prevErr, attempt) {
       return;
     }
     clearOverlays();
+    clearCtrls();
     drawPoints(d);
     try {
       renderFit(await api("/api/fit"), true);

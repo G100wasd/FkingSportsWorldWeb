@@ -149,6 +149,7 @@ def api_fit():
     return {
         "track_bd": fit["track_bd"],
         "locs": [[q["gLat"], q["gLng"]] for q in locs],
+        "snap_idx": [i for i, q in enumerate(locs) if q.get("snapped")],
         "fit": {
             "cx_bd": fit["cx_bd"], "angle_deg": fit["angle"] * 180 / 3.141592653589793,
             "straight": fit["straight"], "radius": fit["radius"],
