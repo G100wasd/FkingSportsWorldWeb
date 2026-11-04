@@ -178,9 +178,14 @@ function cfgSpeed() {
   const v = parseFloat($("cfg-speed").value);
   return isFinite(v) && v > 0 ? v : null;
 }
+// 全角冒号/数字归一成半角（"１５：００" -> "15:00"）
+function halfWidth(s) {
+  return s.replace(/[：∶]/g, ":")
+          .replace(/[０-９]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0));
+}
+
 function cfgDur() {
-  const raw = ($("cfg-dur").value || "").trim()
-                .replace(/[：∶]/g, ":");   // 全角冒号归一
+  const raw = halfWidth(($("cfg-dur").value || "").trim());
   const m = raw.match(/^(?:(\d+):)?([0-5]?\d):([0-5]\d)$/) || raw.match(/^(\d+):([0-5]?\d)$/);
   if (m) return m.length === 4 ? (+m[1]) * 3600 + (+m[2]) * 60 + (+m[3])
                               : (+m[1]) * 60 + (+m[2]);
@@ -210,43 +215,59 @@ $("cfg-dur").addEventListener("input", () => {
   updateCfgHint();
 });
 $("cfg-start").addEventListener("input", () => {
-  startMsCache = null;   // 输入变了才重抽随机偏移
+  startCache = null;   // 输入变了才重抽随机偏移
+  updateCfgHint();
+});
+$("cfg-date").addEventListener("input", () => {
+  startCache = null;
   updateCfgHint();
 });
 
-// 伪装起跑：HH:MM 且在 06:00–22:00 内 -> 用该时刻；否则默认 15:30±[1,5]min。
-// 起跑+用时须早于现在，否则回退到昨天。
-let startMsCache = null;
-function resolveStartMs() {
-  if (startMsCache == null) startMsCache = computeStartMs();
-  return startMsCache;
+// 伪装起跑：日期(可空=今天) + HH:MM(窗口 06:00–22:00，否则默认 15:30±[1,5]min)。
+// 所选起跑落在未来 -> 黄字警告并把日期自动调回当天（当天仍未发生则退昨天）。
+let startCache = null;   // {ms, warn}
+function resolveStart() {
+  if (!startCache) startCache = computeStart();
+  return startCache;
 }
-function computeStartMs() {
-  const raw = ($("cfg-start").value || "").trim()
-                .replace(/[：∶]/g, ":");   // 全角冒号归一
+function resolveStartMs() { return resolveStart().ms; }
+
+function computeStart() {
+  const raw = halfWidth(($("cfg-start").value || "").trim());
   const durMs = cfgEffDur() * 1000 + 60000;
+  const dv = ($("cfg-date").value || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
   const m = raw.match(/^([01]?\d|2[0-3]):([0-5]\d)$/);
-  let ms;
-  if (m && +m[1] >= CFG_START_LO && +m[1] < CFG_START_HI) {
-    const d = new Date();
-    d.setHours(+m[1], +m[2], Math.floor(Math.random() * 60), 0);
-    ms = d.getTime();
-  } else {
-    const jitter = (1 + Math.floor(Math.random() * 5)) * (Math.random() < .5 ? -1 : 1);
-    const d = new Date();
-    d.setHours(15, 30 + jitter, Math.floor(Math.random() * 60), 0);
-    ms = d.getTime();
+  const inWin = m && +m[1] >= CFG_START_LO && +m[1] < CFG_START_HI;
+  const jitter = (1 + Math.floor(Math.random() * 5)) * (Math.random() < .5 ? -1 : 1);
+  const sec = Math.floor(Math.random() * 60);
+  const applyTime = d => inWin
+    ? d.setHours(+m[1], +m[2], sec, 0)
+    : d.setHours(15, 30 + jitter, sec, 0);
+  const p = n => String(n).padStart(2, "0");
+
+  let base = dv ? new Date(+dv[1], +dv[2] - 1, +dv[3]) : new Date();
+  applyTime(base);
+  let ms = base.getTime(), warn = null;
+  if (ms + durMs > Date.now()) {              // 起跑在未来 -> 日期调回当天
+    warn = "所选起跑时间尚未发生，已自动调整为当天日期";
+    const now = new Date();
+    $("cfg-date").value =
+      `${now.getFullYear()}-${p(now.getMonth() + 1)}-${p(now.getDate())}`;
+    base = new Date();
+    applyTime(base);
+    ms = base.getTime();
+    if (ms + durMs > Date.now()) ms -= 86400000;  // 当天该时刻仍未发生 -> 昨天
   }
-  if (ms + durMs > Date.now()) ms -= 86400000;
-  return ms;
+  return { ms, warn };
 }
 
 function updateCfgHint() {
-  const ms = resolveStartMs(), d = new Date(ms);
+  const { ms, warn } = resolveStart(), d = new Date(ms);
   const p = n => String(n).padStart(2, "0");
-  const sameDay = new Date().toDateString() === d.toDateString();
-  $("cfg-hint").textContent =
-    `起跑：${sameDay ? "今天" : "昨天"} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}` +
+  $("cfg-hint").innerHTML =
+    (warn ? `<span style="color:#b7791f">⚠ ${warn}</span><br>` : "") +
+    `起跑：${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ` +
+    `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}` +
     ` ｜ ${cfgDist().toFixed(0)}m · ${fmtDur(cfgEffDur())} · ` +
     `${(cfgDist() / cfgEffDur()).toFixed(2)} m/s`;
 }
