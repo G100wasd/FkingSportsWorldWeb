@@ -536,6 +536,36 @@ function renderDetail(d) {
       `</div></div>`;
   }
 
+  // ⑥ 10s 窗（提交形态：id=60000+i、queueNum=i）
+  if (Array.isArray(d.speed_windows) && d.speed_windows.length) {
+    const t0 = d.summary?.start_ms || 0;
+    const rows = d.speed_windows.map((w, i) => {
+      const st = d.step_windows?.[i] || {};
+      return { cells: [
+        i, fmtDur((w.endTime - t0) / 1000), (w.distance || 0).toFixed(1),
+        st.stepsNum ?? "-", w.id, w.queueNum,
+      ] };
+    });
+    html += `<div class="detail-sec"><h4>10 秒窗统计（提交形态）</h4>` +
+      `<div class="detail-scroll">` +
+      tbl(["#", "窗末t", "里程m", "步数", "id", "queueNum"], rows) +
+      `</div></div>`;
+  }
+
+  // ⑦ 公里圈（OBS laps_json 形态：每 1000m 一圈）
+  if (Array.isArray(d.laps) && d.laps.length) {
+    const rows = d.laps.map(l => ({ cells: [
+      l.lapIndex, (l.distance || 0).toFixed(0), fmtDur(l.duration || 0),
+      fmtPace(l.avgPace), l.step ?? "-",
+      (l.avgStride ?? "-") === "-" ? "-" : (+l.avgStride).toFixed(0),
+      (l.avgCadence ?? "-") === "-" ? "-" : (+l.avgCadence).toFixed(0),
+      (l.elevationGain ?? 0).toFixed(1), l.isFullLap ? "✓" : "残",
+    ] }));
+    html += `<div class="detail-sec"><h4>公里圈（OBS laps_json）</h4>` +
+      tbl(["圈", "里程m", "用时", "配速", "步数", "步幅cm", "步频", "爬升m", "整圈"], rows) +
+      `</div>`;
+  }
+
   // 服务端下发的 5 个打卡点坐标
   if (Array.isArray(f.point_errors) && f.point_errors.length) {
     html += `<div class="detail-sec"><h4>各打卡点拟合误差（m）</h4>` +

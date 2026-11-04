@@ -17,7 +17,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from sportsworld.config import CFG, load as cfg_load, save as cfg_save
-from sportsworld.domain import stadium, track
+from sportsworld.domain import stadium, track, wire
 from sportsworld.services import runarea
 from sportsworld.services.auth import login
 
@@ -199,6 +199,7 @@ def api_fit(body: FitBody):
     perim = fit["perimeter"] or 1.0
     total_dis = float(locs[-1]["totalDis"]) if locs else 0.0
     total_time = int(locs[-1]["totalTime"]) if locs else 0
+    speed_win, step_win = wire.submit_windows(trk)
     return {
         "track_bd": fit["track_bd"],
         "locs": [[q["gLat"], q["gLng"], int(q["totalDis"] // perim)]
@@ -208,6 +209,9 @@ def api_fit(body: FitBody):
         "speedPerTenSec": trk["speedPerTenSec"],
         "stepsPerTenSec": trk["stepsPerTenSec"],
         "segments": trk["segments"],
+        "speed_windows": speed_win,
+        "step_windows": step_win,
+        "laps": wire.build_laps(trk, trk["startTime"]),
         "summary": {
             "distance_m": round(total_dis, 1),
             "duration_s": total_time,
