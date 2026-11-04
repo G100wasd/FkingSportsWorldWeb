@@ -63,7 +63,19 @@
       1.6,
       5.0
     ],
-    "snap_tolerance_m": 40
+    "snap_tolerance_m": 40,
+    "drift_gps_speed_kmh": 6.0,
+    "gps_zero_p": 0.2,
+    "weight_kg": 68.0,
+    "alt_base": 82.0,
+    "alt_sigma": [
+      3.8,
+      6.2
+    ],
+    "cadence_range": [
+      100,
+      200
+    ]
   },
   "frontend": {
     "amap_key": "712078f920fec121063036d2c821f49e",
@@ -89,8 +101,8 @@
   },
   "anchors": {
     "18818920029": {
-      "lat": 0,
-      "lon": 0
+      "lat": 22.906172,
+      "lon": 113.874195
     }
   }
 }

@@ -8,6 +8,7 @@
 import atexit
 import math
 import random
+import time
 
 import matplotlib.pyplot as plt
 
@@ -106,9 +107,11 @@ def main() -> None:
 
     seed = (TRACK_SEED if TRACK_SEED is not None
             else random.SystemRandom().randrange(2 ** 31))
-    locs = track.build_track(TRACK_DIST, TRACK_DUR, seed, area["points_bd"],
-                             fence_ring=area["stadium_ring"],
-                             ring=(dense, arcs, center))
+    trk = track.build_track(TRACK_DIST, TRACK_DUR, seed, area["points_bd"],
+                            fence_ring=area["stadium_ring"],
+                            ring=(dense, arcs, center),
+                            start_ms=int(time.time() * 1000))
+    locs = trk["locations"]
     inside = sum(1 for q in locs
                  if geom.in_ring(area["stadium_ring"], q["gLat"], q["gLng"]))
     snapped = sum(1 for q in locs if q.get("snapped"))

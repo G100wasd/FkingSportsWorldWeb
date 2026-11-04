@@ -179,12 +179,15 @@ def api_fit(body: FitBody):
     if not (100.0 <= body.dist <= 50000.0) or not (30 <= body.dur <= 14400):
         raise HTTPException(400, "目标距离/用时超出合理范围")
     area = _last_area
+    start_ms = body.start_ms or int(dt.datetime.now().timestamp() * 1000)
     try:
         dense, arcs, center, fit = stadium.make_stadium_ring(
             area["points_bd"], area["ref_center"], area["stadium_ring"])
-        locs = track.build_track(
+        trk = track.build_track(
             body.dist, body.dur, None, area["points_bd"],
-            fence_ring=area["stadium_ring"], ring=(dense, arcs, center))
+            fence_ring=area["stadium_ring"], ring=(dense, arcs, center),
+            start_ms=start_ms)
+        locs = trk["locations"]
     except Exception as e:
         traceback.print_exc()
         raise HTTPException(502, f"拟合/轨迹生成失败: {e}")
@@ -202,10 +205,13 @@ def api_fit(body: FitBody):
                  for q in locs],
         "locs_full": locs,
         "snap_idx": [i for i, q in enumerate(locs) if q.get("snapped")],
+        "speedPerTenSec": trk["speedPerTenSec"],
+        "stepsPerTenSec": trk["stepsPerTenSec"],
+        "segments": trk["segments"],
         "summary": {
             "distance_m": round(total_dis, 1),
             "duration_s": total_time,
-            "start_ms": body.start_ms or None,
+            "start_ms": trk["startTime"] or None,
             "pace_s_per_km": round(total_time / (total_dis / 1000.0), 1)
                              if total_dis > 0 else None,
             "avg_speed_mps": round(total_dis / total_time, 3)
@@ -213,6 +219,14 @@ def api_fit(body: FitBody):
             "point_count": len(locs),
             "lap_count": int(total_dis // perim) + 1 if total_dis > 0 else 0,
             "snapped": sum(1 for q in locs if q.get("snapped")),
+            "total_steps": trk["totalSteps"],
+            "step_freq": trk["avgStepFreq"],
+            "calorie": trk["calorie"],
+            "avg_power": trk["avgPower"],
+            "ascent_m": trk["totalAscent"],
+            "valid_dis_m": round(trk["validDistance"], 1),
+            "valid_time_s": trk["validTime"],
+            "pace_milli": trk["paceMilli"],
         },
         "fit": {
             "cx_bd": fit["cx_bd"], "angle_deg": fit["angle"] * 180 / 3.141592653589793,

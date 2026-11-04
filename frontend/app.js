@@ -512,13 +512,27 @@ function renderDetail(d) {
       const q = full[i];
       rows.push({ snap: snap.has(i), cells: [
         i, fmtDur(q.totalTime || 0), (q.totalDis || 0).toFixed(1),
+        q.steps ?? "-",
         (q.speed ?? "-") === "-" ? "-" : (+q.speed / 3.6).toFixed(2),
-        q.ptype ?? "-", snap.has(i) ? "●" : "",
+        (q.bdA ?? "-") === "-" ? "-" : (+q.bdA).toFixed(1),
+        q.type ?? q.ptype ?? "-", snap.has(i) ? "●" : "",
       ] });
     }
     html += `<div class="detail-sec"><h4>逐点采样（每 ${step} 点 + 全部打卡点）</h4>` +
       `<div class="detail-scroll">` +
-      tbl(["#", "t", "里程m", "速度m/s", "类型", "打卡"], rows) +
+      tbl(["#", "t", "里程m", "步数", "速度m/s", "海拔m", "类型", "打卡"], rows) +
+      `</div></div>`;
+  }
+
+  // ⑤ 分段统计（60s 窗口，协议 segments 字段）
+  if (Array.isArray(d.segments) && d.segments.length) {
+    const rows = d.segments.map((s, i) => ({ cells: [
+      i + 1, fmtDur(s.totalTime || 0), s.distance ?? "-",
+      (s.avgSpeed ?? 0).toFixed(2), s.avgStep ?? "-",
+    ] }));
+    html += `<div class="detail-sec"><h4>分段统计（60s/段）</h4>` +
+      `<div class="detail-scroll">` +
+      tbl(["段", "时长", "里程m", "均速m/s", "步频spm"], rows) +
       `</div></div>`;
   }
 
@@ -556,6 +570,15 @@ function drawSpeedChart(full, snap, locs) {
     }
   });
   ctx.setLineDash([]);
+  // 海拔折线（bdA，独立纵轴缩放到同幅面，橙色细线）
+  const alts = full.map(q => +q.bdA || 0);
+  const amax = Math.max(...alts, 0.1), amin = Math.min(...alts);
+  const YA = v => H - pad - (v - amin) * (H - 2 * pad) / (amax - amin || 1);
+  ctx.strokeStyle = "#dd6b20"; ctx.lineWidth = 0.8; ctx.globalAlpha = 0.7;
+  ctx.beginPath();
+  alts.forEach((v, i) => i ? ctx.lineTo(X(i), YA(v)) : ctx.moveTo(X(i), YA(v)));
+  ctx.stroke();
+  ctx.globalAlpha = 1;
   // 速度折线
   ctx.strokeStyle = "#3182ce"; ctx.lineWidth = 1.2; ctx.beginPath();
   speeds.forEach((v, i) => i ? ctx.lineTo(X(i), Y(v)) : ctx.moveTo(X(i), Y(v)));
@@ -569,6 +592,8 @@ function drawSpeedChart(full, snap, locs) {
   ctx.fillStyle = "#a0aec0"; ctx.font = "10px sans-serif";
   ctx.fillText(vmax.toFixed(2) + " m/s", pad + 2, pad + 9);
   ctx.fillText(vmin.toFixed(2), pad + 2, H - pad - 2);
+  ctx.fillStyle = "#dd6b20";
+  ctx.fillText(amin.toFixed(1) + "~" + amax.toFixed(1) + " m", W - pad - 68, pad + 9);
 }
 
 // 信息卡汇总行；adjustedMeters 非空表示手动调整后的估算里程
@@ -587,6 +612,12 @@ function renderSummary(sum, adjustedMeters) {
     `<div class="kv">用时<b>${fmtDur(sum.duration_s)}</b></div>` +
     `<div class="kv">平均配速<b>${fmtPace(sum.pace_s_per_km)}/km</b></div>` +
     `<div class="kv">均速<b>${sum.avg_speed_mps} m/s</b></div>` +
+    `<div class="kv">总步数<b>${sum.total_steps ?? "-"}</b></div>` +
+    `<div class="kv">平均步频<b>${sum.step_freq ?? "-"} spm</b></div>` +
+    `<div class="kv">卡路里<b>${sum.calorie ?? "-"} kcal</b></div>` +
+    `<div class="kv">平均功率<b>${sum.avg_power ?? "-"} W</b></div>` +
+    `<div class="kv">累计爬升<b>${sum.ascent_m ?? "-"} m</b></div>` +
+    `<div class="kv">有效里程<b>${sum.valid_dis_m != null ? (sum.valid_dis_m / 1000).toFixed(2) + " km" : "-"}</b></div>` +
     `<div class="kv">轨迹点<b>${sum.point_count}</b></div>` +
     `<div class="kv">圈数<b>${sum.lap_count}</b></div>` +
     `<div class="kv">打卡锚点<b>${sum.snapped}</b></div>` + startChip;
