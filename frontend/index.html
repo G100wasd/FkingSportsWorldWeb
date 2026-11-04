@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NekoSportsWorld Web</title>
+
+<!-- ============ 高德地图配置 ============
+     去 https://lbs.amap.com/ 申请「Web端(JS API)」key，填到下面两处： -->
+<script>
+  const AMAP_KEY = "712078f920fec121063036d2c821f49e";   // JS API key
+  window._AMapSecurityConfig = {
+    securityJsCode: "4318a9597a171c70a60fce718d67d959"  // key 配套的安全密钥 jscode
+  };
+</script>
+<script src="https://webapi.amap.com/loader.js"></script>
+
+<style>
+  * { box-sizing: border-box; margin: 0; }
+  html, body { height: 100%; font-family: "Microsoft YaHei", sans-serif; }
+  body { display: flex; flex-direction: column; }
+
+  #bar {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 16px; background: #1f2733; color: #e8ecf1;
+    flex-wrap: wrap;
+  }
+  #bar .logo { font-weight: 700; margin-right: 12px; }
+  #bar input {
+    width: 160px; padding: 7px 10px; border: 1px solid #4a5568;
+    border-radius: 6px; background: #2d3748; color: #fff; outline: none;
+  }
+  #bar input:focus { border-color: #63b3ed; }
+  #bar button {
+    padding: 7px 18px; border: none; border-radius: 6px;
+    background: #3182ce; color: #fff; cursor: pointer;
+  }
+  #bar button:hover { background: #4299e1; }
+  #bar button:disabled { background: #4a5568; cursor: not-allowed; }
+  #btn-logout { background: #744210; display: none; }
+  #btn-logout:hover { background: #975a16; }
+
+  /* 登录状态标志灯 */
+  #status {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-size: 13px; padding: 4px 12px; border-radius: 999px;
+    background: #4a5568;
+  }
+  #status .dot { width: 9px; height: 9px; border-radius: 50%; }
+  #status.off  .dot { background: #a0aec0; }
+  #status.busy .dot { background: #ed8936; animation: blink .7s infinite alternate; }
+  #status.on   .dot { background: #48bb78; }
+  #status.err  .dot { background: #f56565; }
+  @keyframes blink { to { opacity: .3; } }
+
+  #map { flex: 1; position: relative; }
+  #map::before {
+    content: "登录后加载地图"; position: absolute; inset: 0;
+    display: flex; align-items: center; justify-content: center;
+    color: #718096; font-size: 15px; background: #edf0f4;
+  }
+  #map.ready::before { display: none; }
+</style>
+</head>
+<body>
+
+<div id="bar">
+  <span class="logo">NekoSportsWorld</span>
+  <input id="inp-user" placeholder="账号" autocomplete="username">
+  <input id="inp-pass" type="password" placeholder="密码" autocomplete="current-password">
+  <button id="btn-login">登录</button>
+  <button id="btn-logout">登出</button>
+  <span id="status" class="off"><span class="dot"></span><span id="status-text">未登录</span></span>
+</div>
+
+<div id="map"></div>
+
+<script>
+const $ = id => document.getElementById(id);
+const statusEl = $("status"), statusText = $("status-text");
+let map = null, sess = null, locMarker = null;
+
+function setStatus(cls, text) {
+  statusEl.className = cls;
+  statusText.textContent = text;
+}
+
+async function api(path, body) {
+  const r = await fetch(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body || {}),
+  });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(d.detail || ("HTTP " + r.status));
+  return d;
+}
+
+/* ---------- 高德地图 ---------- */
+
+function initMap() {
+  return AMapLoader.load({
+    key: AMAP_KEY,
+    version: "2.0",
+    plugins: ["AMap.Geolocation", "AMap.Scale", "AMap.ToolBar", "AMap.ConvertFrom"],
+  }).then(AMap => {
+    map = new AMap.Map("map", {
+      zoom: 16,                       // 可滚轮缩放
+      center: [116.397, 39.909],      // 初始中心，定位后会被覆盖
+      viewMode: "2D",
+      dragEnable: true,               // 可拖动
+      zoomEnable: true,
+    });
+    map.addControl(new AMap.Scale());
+    map.addControl(new AMap.ToolBar({ position: "RB" }));
+    $("map").classList.add("ready");
+    locateMe(AMap);
+  });
+}
+
+function locateMe(AMap) {
+  const geo = new AMap.Geolocation({
+    enableHighAccuracy: true,
+    timeout: 10000,
+    convert: true,          // 定位结果自动转为 GCJ-02 再上图
+    showButton: false,
+    showMarker: false,
+  });
+  geo.getCurrentPosition((status, result) => {
+    if (status === "complete") {
+      showLocation(AMap, result.position, "高德定位");
+    } else {
+      // 高德定位失败 -> 浏览器 GPS (WGS-84) -> convertFrom 纠偏
+      navigator.geolocation?.getCurrentPosition(
+        pos => {
+          const ll = [pos.coords.longitude, pos.coords.latitude];
+          AMap.convertFrom(ll, "gps", (st, res) => {
+            const g = (st === "ok" && res.locations[0]) ? res.locations[0] : ll;
+            showLocation(AMap, g, "浏览器GPS");
+          });
+        },
+        () => showLocation(AMap, map.getCenter(), "定位失败(默认位置)"),
+        { enableHighAccuracy: true, timeout: 8000 },
+      );
+    }
+  });
+}
+
+function showLocation(AMap, lnglat, src) {
+  map.setZoomAndCenter(17, lnglat);
+  if (locMarker) locMarker.setMap(null);
+  locMarker = new AMap.Marker({
+    position: lnglat, map,
+    title: src,
+    label: { content: "当前位置·" + src, direction: "top" },
+  });
+}
+
+/* ---------- 登录流程 ---------- */
+
+async function doLogin() {
+  const username = $("inp-user").value.trim();
+  const password = $("inp-pass").value;
+  if (!username || !password) { setStatus("err", "请输入账号密码"); return; }
+  $("btn-login").disabled = true;
+  setStatus("busy", "登录中...");
+  try {
+    sess = await api("/api/login", { username, password });
+    setStatus("on", `已登录 ${sess.name || ""} (uid=${sess.uid})`);
+    $("btn-logout").style.display = "";
+    if (!map) initMap().catch(e => setStatus("err", "地图加载失败: " + e));
+  } catch (e) {
+    setStatus("err", e.message);
+  } finally {
+    $("btn-login").disabled = false;
+  }
+}
+
+async function doLogout() {
+  await api("/api/logout").catch(() => {});
+  sess = null;
+  $("btn-logout").style.display = "none";
+  setStatus("off", "未登录");
+}
+
+$("btn-login").onclick = doLogin;
+$("btn-logout").onclick = doLogout;
+$("inp-pass").addEventListener("keydown", e => { if (e.key === "Enter") doLogin(); });
+
+// 后端下发默认账号密码，预填输入框
+fetch("/api/defaults").then(r => r.json()).then(d => {
+  if (d.username) $("inp-user").value = d.username;
+  if (d.password) $("inp-pass").value = d.password;
+});
+
+// 刷新页面时若后端仍有会话，恢复状态
+fetch("/api/session").then(r => r.json()).then(d => {
+  if (d.logged_in) {
+    sess = d;
+    setStatus("on", `已登录 ${d.name || ""} (uid=${d.uid})`);
+    $("btn-logout").style.display = "";
+    initMap().catch(() => {});
+  }
+});
+</script>
+</body>
+</html>
