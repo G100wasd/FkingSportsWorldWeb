@@ -5,8 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>NekoSportsWorld Web</title>
 
-<!-- ============ 高德地图配置 ============
-     去 https://lbs.amap.com/ 申请「Web端(JS API)」key，填到下面两处： -->
+<!-- ============ 高德地图配置 ============ -->
 <script>
   const AMAP_KEY = "712078f920fec121063036d2c821f49e";   // JS API key
   window._AMapSecurityConfig = {
@@ -17,9 +16,10 @@
 
 <style>
   * { box-sizing: border-box; margin: 0; }
-  html, body { height: 100%; font-family: "Microsoft YaHei", sans-serif; }
+  html, body { height: 100%; font-family: "Microsoft YaHei", sans-serif; background: #f0f2f5; }
   body { display: flex; flex-direction: column; }
 
+  /* ---------- 顶栏 ---------- */
   #bar {
     display: flex; align-items: center; gap: 10px;
     padding: 10px 16px; background: #1f2733; color: #e8ecf1;
@@ -40,7 +40,6 @@
   #btn-logout { background: #744210; display: none; }
   #btn-logout:hover { background: #975a16; }
 
-  /* 登录状态标志灯 */
   #status {
     display: inline-flex; align-items: center; gap: 6px;
     font-size: 13px; padding: 4px 12px; border-radius: 999px;
@@ -53,13 +52,45 @@
   #status.err  .dot { background: #f56565; }
   @keyframes blink { to { opacity: .3; } }
 
-  #map { flex: 1; position: relative; }
-  #map::before {
-    content: "登录后加载地图"; position: absolute; inset: 0;
-    display: flex; align-items: center; justify-content: center;
-    color: #718096; font-size: 15px; background: #edf0f4;
+  /* ---------- 主体：左地图 + 右面板 ---------- */
+  #content {
+    flex: 1; display: flex; gap: 14px; padding: 14px;
+    align-items: flex-start; overflow: auto;
   }
-  #map.ready::before { display: none; }
+  #map-card {
+    flex: 0 0 58%; max-width: 720px;
+    background: #fff; border-radius: 10px; overflow: hidden;
+    box-shadow: 0 1px 4px rgba(0,0,0,.12);
+  }
+  #map-card h3 {
+    padding: 10px 14px; font-size: 14px; color: #2d3748;
+    border-bottom: 1px solid #e2e8f0; background: #fafbfc;
+  }
+  #map { height: 480px; }
+  #map.picking { cursor: crosshair; }
+
+  #panel { flex: 1; min-width: 280px; display: flex; flex-direction: column; gap: 14px; }
+  .card {
+    background: #fff; border-radius: 10px; padding: 14px 16px;
+    box-shadow: 0 1px 4px rgba(0,0,0,.12);
+  }
+  .card h3 { font-size: 14px; color: #2d3748; margin-bottom: 12px; }
+  .row { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+  .row label { width: 74px; font-size: 13px; color: #4a5568; flex-shrink: 0; }
+  .row input {
+    flex: 1; padding: 7px 10px; border: 1px solid #cbd5e0;
+    border-radius: 6px; font-size: 13px; outline: none;
+  }
+  .row input:focus { border-color: #3182ce; }
+  .btn-row { display: flex; gap: 8px; flex-wrap: wrap; }
+  .btn-row button {
+    flex: 1; min-width: 80px; padding: 8px 6px; border: 1px solid #cbd5e0;
+    border-radius: 6px; background: #fff; color: #2d3748;
+    font-size: 13px; cursor: pointer;
+  }
+  .btn-row button:hover { background: #edf2f7; }
+  .btn-row button.active { background: #3182ce; color: #fff; border-color: #3182ce; }
+  .hint { font-size: 12px; color: #718096; margin-top: 8px; line-height: 1.6; }
 </style>
 </head>
 <body>
@@ -73,12 +104,54 @@
   <span id="status" class="off"><span class="dot"></span><span id="status-text">未登录</span></span>
 </div>
 
-<div id="map"></div>
+<div id="content">
+  <div id="map-card">
+    <h3>地图 · 点击选点确定跑步区域锚点</h3>
+    <div id="map"></div>
+  </div>
+
+  <div id="panel">
+    <div class="card">
+      <h3>定位（BD-09 坐标）</h3>
+      <div class="row">
+        <label>纬度 lat</label>
+        <input id="inp-lat" placeholder="22.9058142" value="22.9058142">
+      </div>
+      <div class="row">
+        <label>经度 lon</label>
+        <input id="inp-lon" placeholder="113.8709786" value="113.8709786">
+      </div>
+      <div class="btn-row">
+        <button id="btn-geoloc">本机定位</button>
+        <button id="btn-pick">地图选点</button>
+        <button id="btn-goto">跳转到该点</button>
+      </div>
+      <div class="hint">
+        「地图选点」：点击后在地图上单击任意位置，坐标自动填入上方框。<br>
+        「跳转到该点」：按输入框坐标移动地图视图。<br>
+        输入框坐标系为 BD-09（与服务端数据一致），地图内部自动转 GCJ-02。
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>跑步区域</h3>
+      <div class="btn-row">
+        <button id="btn-runarea">获取打卡点并拟合轨迹</button>
+      </div>
+      <div class="hint" id="runarea-info">
+        以上方锚点为原点拉取实时打卡点，拟合体育场跑道并生成轨迹。<br>
+        （点位接口限流约 5 分钟 3 次）
+      </div>
+    </div>
+  </div>
+</div>
 
 <script>
 const $ = id => document.getElementById(id);
 const statusEl = $("status"), statusText = $("status-text");
-let map = null, sess = null, locMarker = null;
+let map = null, sess = null, AMap_ = null;
+let locMarker = null, picking = false;
+let overlays = [];   // 每次拟合的围栏/跑道/轨迹/打卡点图层
 
 function setStatus(cls, text) {
   statusEl.className = cls;
@@ -96,6 +169,56 @@ async function api(path, body) {
   return d;
 }
 
+/* ---------- BD-09 <-> GCJ-02 转换（前端本地算，与后端数据保持 BD-09） ---------- */
+const X_PI = Math.PI * 3000.0 / 180.0;
+function bd09ToGcj02(lat, lon) {
+  const x = lon - 0.0065, y = lat - 0.006;
+  const z = Math.sqrt(x * x + y * y) - 0.00002 * Math.sin(y * X_PI);
+  const t = Math.atan2(y, x) - 0.000003 * Math.cos(x * X_PI);
+  return [z * Math.sin(t), z * Math.cos(t)];   // [lat, lon]
+}
+function gcj02ToBd09(lat, lon) {
+  const x = lon, y = lat;
+  const z = Math.sqrt(x * x + y * y) + 0.00002 * Math.sin(y * X_PI);
+  const t = Math.atan2(y, x) + 0.000003 * Math.cos(x * X_PI);
+  return [z * Math.sin(t) + 0.006, z * Math.cos(t) + 0.0065];   // [lat, lon]
+}
+
+/* ---------- 定位输入框 ---------- */
+
+function readInputs() {
+  const lat = parseFloat($("inp-lat").value);
+  const lon = parseFloat($("inp-lon").value);
+  if (!isFinite(lat) || !isFinite(lon)) return null;
+  return [lat, lon];
+}
+
+function bdToLngLat(bdLat, bdLon) {
+  const [gLat, gLon] = bd09ToGcj02(bdLat, bdLon);
+  return new AMap_.LngLat(gLon, gLat);
+}
+
+// 锚点地标：跟随输入框坐标移动，已存在则平滑移动不重建
+function setMarkerAtBd(bdLat, bdLon, label) {
+  const ll = bdToLngLat(bdLat, bdLon);
+  if (locMarker) {
+    locMarker.setPosition(ll);
+    if (label) locMarker.setLabel({ content: label, direction: "top" });
+  } else {
+    locMarker = new AMap_.Marker({
+      position: ll, map, anchor: "bottom-center",
+      label: { content: label || "锚点", direction: "top" },
+    });
+  }
+  return ll;
+}
+
+// 输入框变化 -> 地标实时跟随（不改地图视野）
+function syncMarkerFromInputs() {
+  const bd = readInputs();
+  if (bd && map) setMarkerAtBd(bd[0], bd[1]);
+}
+
 /* ---------- 高德地图 ---------- */
 
 function initMap() {
@@ -104,57 +227,156 @@ function initMap() {
     version: "2.0",
     plugins: ["AMap.Geolocation", "AMap.Scale", "AMap.ToolBar", "AMap.ConvertFrom"],
   }).then(AMap => {
+    AMap_ = AMap;
     map = new AMap.Map("map", {
-      zoom: 16,                       // 可滚轮缩放
-      center: [116.397, 39.909],      // 初始中心，定位后会被覆盖
-      viewMode: "2D",
-      dragEnable: true,               // 可拖动
-      zoomEnable: true,
+      zoom: 15, dragEnable: true, zoomEnable: true,
     });
     map.addControl(new AMap.Scale());
     map.addControl(new AMap.ToolBar({ position: "RB" }));
-    $("map").classList.add("ready");
+    map.on("click", onMapClick);
+    // 初始视图：按输入框锚点
+    const bd = readInputs();
+    if (bd) map.setZoomAndCenter(16, setMarkerAtBd(bd[0], bd[1]));
     locateMe(AMap);
   });
 }
 
+function onMapClick(e) {
+  if (!picking) return;
+  const gLat = e.lnglat.getLat(), gLon = e.lnglat.getLng();
+  const [bLat, bLon] = gcj02ToBd09(gLat, gLon);
+  $("inp-lat").value = bLat.toFixed(7);
+  $("inp-lon").value = bLon.toFixed(7);
+  setMarkerAtBd(bLat, bLon, "选点");
+  togglePick(false);
+}
+
 function locateMe(AMap) {
   const geo = new AMap.Geolocation({
-    enableHighAccuracy: true,
-    timeout: 10000,
-    convert: true,          // 定位结果自动转为 GCJ-02 再上图
-    showButton: false,
-    showMarker: false,
+    enableHighAccuracy: true, timeout: 10000,
+    convert: true, showButton: false, showMarker: false,
   });
   geo.getCurrentPosition((status, result) => {
     if (status === "complete") {
-      showLocation(AMap, result.position, "高德定位");
+      const gLat = result.position.lat, gLon = result.position.lng;
+      const [bLat, bLon] = gcj02ToBd09(gLat, gLon);
+      $("inp-lat").value = bLat.toFixed(7);
+      $("inp-lon").value = bLon.toFixed(7);
+      map.setCenter(setMarkerAtBd(bLat, bLon, "本机定位"));
     } else {
-      // 高德定位失败 -> 浏览器 GPS (WGS-84) -> convertFrom 纠偏
       navigator.geolocation?.getCurrentPosition(
         pos => {
           const ll = [pos.coords.longitude, pos.coords.latitude];
           AMap.convertFrom(ll, "gps", (st, res) => {
             const g = (st === "ok" && res.locations[0]) ? res.locations[0] : ll;
-            showLocation(AMap, g, "浏览器GPS");
+            const [bLat, bLon] = gcj02ToBd09(g.lat, g.lng);
+            $("inp-lat").value = bLat.toFixed(7);
+            $("inp-lon").value = bLon.toFixed(7);
+            map.setCenter(setMarkerAtBd(bLat, bLon, "GPS定位"));
           });
         },
-        () => showLocation(AMap, map.getCenter(), "定位失败(默认位置)"),
+        () => {},
         { enableHighAccuracy: true, timeout: 8000 },
       );
     }
   });
 }
 
-function showLocation(AMap, lnglat, src) {
-  map.setZoomAndCenter(17, lnglat);
-  if (locMarker) locMarker.setMap(null);
-  locMarker = new AMap.Marker({
-    position: lnglat, map,
-    title: src,
-    label: { content: "当前位置·" + src, direction: "top" },
-  });
+/* ---------- 面板按钮 ---------- */
+
+function togglePick(force) {
+  picking = (force !== undefined) ? force : !picking;
+  $("btn-pick").classList.toggle("active", picking);
+  $("btn-pick").textContent = picking ? "点击地图选点…" : "地图选点";
+  $("map").classList.toggle("picking", picking);
 }
+
+$("btn-pick").onclick = () => togglePick();
+$("btn-geoloc").onclick = () => { if (AMap_) locateMe(AMap_); };
+$("btn-goto").onclick = () => {
+  const bd = readInputs();
+  if (!bd) return;
+  map.setZoomAndCenter(Math.max(map.getZoom(), 16), setMarkerAtBd(bd[0], bd[1], "锚点"));
+};
+
+// 经纬度输入框实时驱动地标
+$("inp-lat").addEventListener("input", syncMarkerFromInputs);
+$("inp-lon").addEventListener("input", syncMarkerFromInputs);
+
+/* ---------- 跑步区域：拉点 -> 拟合 -> 上图 ---------- */
+
+function clearOverlays() {
+  overlays.forEach(o => o.setMap && o.setMap(null));
+  overlays = [];
+}
+
+async function runArea() {
+  if (!sess) { setStatus("err", "请先登录"); return; }
+  const bd = readInputs();
+  if (!bd) { $("runarea-info").textContent = "经纬度无效"; return; }
+  $("btn-runarea").disabled = true;
+  $("runarea-info").textContent = "拉取打卡点并拟合中…";
+  try {
+    const d = await api("/api/runarea", { lat: bd[0], lon: bd[1] });
+    clearOverlays();
+    // 围栏多边形：跑步区域高亮
+    d.polygons.forEach((ring, i) => {
+      overlays.push(new AMap_.Polygon({
+        path: ring.map(p => bdToLngLat(p[0], p[1])), map, zIndex: 10,
+        fillColor: i === d.stadium_idx ? "#38b2ac" : "#a0aec0",
+        fillOpacity: i === d.stadium_idx ? 0.15 : 0.06,
+        strokeColor: i === d.stadium_idx ? "#2c7a7b" : "#718096",
+        strokeWeight: i === d.stadium_idx ? 2 : 1,
+      }));
+    });
+    // 拟合跑道中心线（虚线）
+    overlays.push(new AMap_.Polyline({
+      path: d.track_bd.map(p => bdToLngLat(p[0], p[1])), map, zIndex: 30,
+      strokeColor: "#4a5568", strokeWeight: 2, strokeStyle: "dashed",
+      strokeOpacity: 0.9,
+    }));
+    // 模拟轨迹（实线）
+    overlays.push(new AMap_.Polyline({
+      path: d.locs.map(p => bdToLngLat(p[0], p[1])), map, zIndex: 40,
+      strokeColor: "#3182ce", strokeWeight: 2.5, strokeOpacity: 0.85,
+    }));
+    // 打卡点红点 + 名称
+    d.points.forEach((p, i) => {
+      overlays.push(new AMap_.CircleMarker({
+        center: bdToLngLat(p.lat, p.lon), radius: 7, map, zIndex: 60,
+        fillColor: "#e53e3e", fillOpacity: 1,
+        strokeColor: "#fff", strokeWeight: 2,
+      }));
+      overlays.push(new AMap_.Text({
+        text: (i + 1) + "." + (p.name || ""), map, zIndex: 60,
+        position: bdToLngLat(p.lat, p.lon), offset: new AMap_.Pixel(0, -18),
+        style: { background: "none", border: "none", color: "#c53030",
+                 "font-size": "11px", "font-weight": "bold",
+                 "text-shadow": "0 0 3px #fff, 0 0 3px #fff" },
+      }));
+    });
+    // 起点 / 终点
+    const st = d.locs[0], en = d.locs[d.locs.length - 1];
+    overlays.push(new AMap_.Marker({
+      position: bdToLngLat(st[0], st[1]), map, zIndex: 70,
+      label: { content: "起点", direction: "top" },
+    }));
+    overlays.push(new AMap_.Marker({
+      position: bdToLngLat(en[0], en[1]), map, zIndex: 70,
+      label: { content: "终点", direction: "top" },
+    }));
+    map.setFitView(overlays);
+    const f = d.fit;
+    $("runarea-info").innerHTML =
+      `打卡点 ${d.points.length} 个 | 直道 ${f.straight.toFixed(0)}m + 半圆 r=${f.radius.toFixed(0)}m | 周长 ${f.perimeter.toFixed(0)}m<br>` +
+      `误差 均=${f.mean_err.toFixed(1)}m 最大=${f.max_err.toFixed(1)}m | 边界余量 ${f.fence_margin.toFixed(1)}m`;
+  } catch (e) {
+    $("runarea-info").textContent = e.message;
+  } finally {
+    $("btn-runarea").disabled = false;
+  }
+}
+$("btn-runarea").onclick = runArea;
 
 /* ---------- 登录流程 ---------- */
 
