@@ -44,8 +44,8 @@ class AnchorBody(BaseModel):
 
 
 class FitBody(BaseModel):
-    """拟合目标：距离（米）+ 用时（秒），由用户在前端配置。"""
-    dist: float = 2250.0
+    """拟合目标：距离（米）+ 用时（秒），暂用固定默认值，后续开放配置。"""
+    dist: float = 2000.0
     dur: int = 720
 
 

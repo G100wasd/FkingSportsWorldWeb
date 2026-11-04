@@ -167,23 +167,6 @@ $("inp-lon").addEventListener("input", syncMarkerFromInputs);
 
 /* ---------- 跑步区域：① 拉点 -> ② 拟合 ---------- */
 
-// 用户配置的跑步目标：距离（米）+ 用时（mm:ss 或秒）
-function fitGoal() {
-  const dist = parseFloat($("inp-dist").value);
-  const raw = ($("inp-dur").value || "").trim();
-  let dur = NaN;
-  const m = raw.match(/^(?:(\d+):)?([0-5]?\d):([0-5]\d)$/) || raw.match(/^(\d+):([0-5]?\d)$/);
-  if (m) {
-    if (m.length === 4) dur = (+m[1]) * 3600 + (+m[2]) * 60 + (+m[3]);  // h:mm:ss
-    else dur = (+m[1]) * 60 + (+m[2]);                                  // mm:ss
-  } else {
-    const v = parseFloat(raw);
-    if (isFinite(v)) dur = Math.round(v);                               // 纯秒数
-  }
-  if (!isFinite(dist) || dist <= 0 || !isFinite(dur) || dur <= 0) return null;
-  return { dist, dur };
-}
-
 function clearOverlays() {
   overlays.concat(fitOverlays).forEach(o => o.setMap && o.setMap(null));
   overlays = []; fitOverlays = [];
@@ -679,7 +662,7 @@ async function refetchAndRefit(prevErr, attempt) {
     $("submit-card").style.display = "none";
     drawPoints(d);
     try {
-      renderFit(await api("/api/fit", fitGoal() || {}), true);
+      renderFit(await api("/api/fit"), true);
     } catch (e2) {
       if (e2.message.includes("无可行解") && attempt < MAX_REFIT)
         return await refetchAndRefit(e2.message, attempt + 1);
@@ -692,12 +675,10 @@ async function refetchAndRefit(prevErr, attempt) {
 
 // 阶段二：拟合体育场 + 生成轨迹；无可行解时自动重拉点重试
 async function doFit() {
-  const goal = fitGoal();
-  if (!goal) { fitError("目标距离/用时无效（距离填米，用时填 mm:ss 或秒）"); return; }
   $("btn-fit").disabled = true;
   $("runarea-info").textContent = "拟合体育场跑道并生成轨迹中…";
   try {
-    renderFit(await api("/api/fit", goal));
+    renderFit(await api("/api/fit"));
   } catch (e) {
     console.error(e);
     if (e.message.includes("无可行解")) await refetchAndRefit(e.message, 1);

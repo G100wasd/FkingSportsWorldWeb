@@ -62,11 +62,6 @@
 
     <div class="card">
       <h3>跑步区域</h3>
-      <div class="row" style="margin-bottom:8px;">
-        <label>目标距离/用时</label>
-        <input id="inp-dist" value="2250" title="目标距离（米）">
-        <input id="inp-dur" value="12:00" title="目标用时（mm:ss 或秒）">
-      </div>
       <div class="btn-row">
         <button id="btn-points">获取打卡点</button>
         <button id="btn-fit" disabled>拟合轨迹</button>
@@ -90,7 +85,7 @@
       <div class="hint" id="runarea-info">
         「获取打卡点」：后台自动拉围栏、申请计分跑并按锚点取实时点位<br>
         （服务端限流约 5 分钟 3 次）；<br>
-        「拟合轨迹」：按上方目标距离/用时对打卡点拟合跑道并生成模拟轨迹；<br>
+        「拟合轨迹」：对下发的打卡点拟合体育场跑道并生成模拟轨迹；<br>
         「调整轨迹」：显示控制点，拖动蓝点微调轨迹（红色打卡点保持必过）。
       </div>
     </div>
