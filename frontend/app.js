@@ -1,4 +1,5 @@
 const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;");
 const statusEl = $("status"), statusText = $("status-text");
 let map = null, sess = null, AMap_ = null;
 let locMarker = null, picking = false;
@@ -463,7 +464,6 @@ function fmtPace(sPerKm) {
 function renderDetail(d) {
   const f = d.fit || {}, full = d.locs_full || [];
   const snap = new Set(d.snap_idx || []);
-  const esc = s => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;");
   const tbl = (heads, rows) =>
     `<table><tr>${heads.map(h => `<th>${h}</th>`).join("")}</tr>` +
     rows.map(r => `<tr${r.snap ? ' class="snap"' : ""}>` +

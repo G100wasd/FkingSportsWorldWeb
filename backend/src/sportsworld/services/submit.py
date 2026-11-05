@@ -7,6 +7,8 @@
 import math
 import uuid as _uuid
 
+import httpx
+
 from ..domain import wire
 from ..integration.client import (check_business, envelope_request,
                                   get_field)
