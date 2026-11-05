@@ -7,6 +7,8 @@
 
 import datetime as dt
 import json
+import os
+import sys
 import threading
 import time
 import traceback
@@ -23,9 +25,11 @@ from sportsworld.domain import stadium, track, wire
 from sportsworld.services import obs, records, runarea, submit
 from sportsworld.services.auth import default_identity, login
 
-FRONTEND_DIR = Path(__file__).resolve().parents[2] / "frontend"
+FRONTEND_DIR = (Path(sys._MEIPASS) / "frontend"
+                if getattr(sys, "frozen", False)
+                else Path(__file__).resolve().parents[2] / "frontend")
 
-app = FastAPI(title="NekoSportsWorld Web")
+app = FastAPI(title="wasdSports Web")
 app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")
 
 # 登录态唯一事实源 = projectConfig.json 的 account；
@@ -415,6 +419,64 @@ def _on_shutdown():
         sess.logout()
 
 
+def _wait_port(port: int, tries: int = 100):
+    """等 uvicorn 起监听，再开 WebView 窗口。"""
+    import socket
+    for _ in range(tries):
+        try:
+            socket.create_connection(("127.0.0.1", port), .2).close()
+            return
+        except OSError:
+            time.sleep(.1)
+
+
+def _pick_port(host: str, want: int) -> int:
+    """优先用 want；被占用则让 OS 随机分配一个可用端口。"""
+    import socket
+    try:
+        s = socket.socket()
+        s.bind((host, want))
+        s.close()
+        return want
+    except OSError:
+        s = socket.socket()
+        s.bind((host, 0))
+        p = s.getsockname()[1]
+        s.close()
+        return p
+
+
 if __name__ == "__main__":
-    uvicorn.run(app, host="127.0.0.1",
-            port=(CFG.get("server") or {}).get("listen_port", 8000))
+    _srv = CFG.get("server") or {}
+    _frozen = getattr(sys, "frozen", False)
+    # 打包模式默认绑 0.0.0.0：手机 APK/局域网设备可直连本机服务端
+    _host = _srv.get("listen_host") or ("0.0.0.0" if _frozen else "127.0.0.1")
+    _want = _srv.get("listen_port", 8000)
+    _port = _pick_port(_host, _want)   # 8000 被占则随机可用端口
+    if _frozen:
+        # 独立窗口模式：uvicorn 后台线程 + pywebview 前台窗（无浏览器外壳）
+        # windowed 打包下 sys.stdout/err 为 None，先重定向防 logging 崩溃
+        if sys.stdout is None:
+            sys.stdout = open(os.devnull, "w", encoding="utf-8")
+        if sys.stderr is None:
+            sys.stderr = open(os.devnull, "w", encoding="utf-8")
+
+        def _serve():
+            try:
+                uvicorn.run(app, host=_host, port=_port,
+                            log_level="warning", log_config=None)
+            except Exception:
+                with open("wasd_err.log", "a", encoding="utf-8") as f:
+                    traceback.print_exc(file=f)
+
+        threading.Thread(target=_serve, daemon=True).start()
+        _wait_port(_port)
+        import webview
+        _title = "wasdSports" if _port == _want else f"wasdSports :{_port}"
+        webview.create_window(
+            _title, f"http://127.0.0.1:{_port}/",
+            width=1280, height=840, min_size=(900, 600))
+        webview.start()
+    else:
+        print(f"[wasdSports] serving on {_host}:{_port}")
+        uvicorn.run(app, host=_host, port=_port)

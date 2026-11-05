@@ -1,6 +1,19 @@
-/backend/src/__pycache__
-/backend/src/sportsworld/integration/__pycache__
-/backend/src/__pycache__
-/backend/src/__pycache__
-/backend/src/sportsworld/integration/__pycache__
-/backend/src/sportsworld/api/__pycache__
+# Python 缓存
+__pycache__/
+*.pyc
+
+# PyInstaller 构建产物（spec 保留用于重打）
+backend/src/build/
+backend/src/dist/
+
+# Android/Gradle 构建产物
+android/app/build/
+android/build/
+android/.gradle/
+android/local.properties
+
+# 分享包产物（README.txt 保留）
+release/*.zip
+
+# 杂项
+*.log

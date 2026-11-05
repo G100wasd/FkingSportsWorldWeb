@@ -5,9 +5,28 @@
 """
 
 import json
+import shutil
+import sys
 from pathlib import Path
 
-CONFIG_PATH = Path(__file__).resolve().parents[2] / "projectConfig.json"
+
+def _config_path() -> Path:
+    """冻结(exe)时用 exe 旁的 projectConfig.json（可写，随程序分发）；
+    缺失则从打包内置的默认配置播种一份出来。"""
+    if getattr(sys, "frozen", False):
+        p = Path(sys.executable).resolve().parent / "projectConfig.json"
+        if not p.exists():
+            bundled = Path(sys._MEIPASS) / "projectConfig.json"
+            try:
+                if bundled.exists():
+                    shutil.copy2(bundled, p)
+            except Exception:
+                pass
+        return p
+    return Path(__file__).resolve().parents[2] / "projectConfig.json"
+
+
+CONFIG_PATH = _config_path()
 
 
 def load() -> dict:
