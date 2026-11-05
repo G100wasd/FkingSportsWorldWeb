@@ -168,15 +168,18 @@ def api_defaults():
 
 @app.get("/api/session")
 def api_session():
-    # 凭据在则自动重登（登录持久化），失败视为未登录
+    # 凭据在则自动重登（登录持久化），失败视为未登录并透传原因
+    err = None
     try:
         sess = get_session()
-    except Exception:
-        sess = None
+    except Exception as e:
+        sess, err = None, str(e)
     uname = _current_user() if sess else ""
     info = _sess_info(sess)
     info["anchor"] = _anchor_for(uname) if sess else None
     info["has_receipt"] = _has_receipt(uname) if sess else False
+    if err:
+        info["login_error"] = err
     return info
 
 
@@ -482,6 +485,13 @@ if __name__ == "__main__":
             _title, f"http://127.0.0.1:{_port}/",
             width=1280, height=840, min_size=(900, 600))
         webview.start()
+        # 窗口已关：主线程同步登出远端会话。daemon 里的 uvicorn 来不及
+        # 触发 shutdown 事件，不显式调用会导致服务端会话悬挂、
+        # 下次登录撞 10121 设备锁
+        try:
+            _on_shutdown()
+        except Exception:
+            pass
     else:
         print(f"[wasdSports] serving on {_host}:{_port}")
         uvicorn.run(app, host=_host, port=_port)

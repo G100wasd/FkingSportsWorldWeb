@@ -32,6 +32,7 @@
   }
   updateCfgHint();
 
+  if (FE.username && FE.password) setStatus("busy", "正在恢复登录…");
   try {
     const d = await fetch("/api/session").then(r => r.json());
     if (d.logged_in) {
@@ -48,6 +49,8 @@
       if (!applyAnchor(d.anchor) && map) locateMe(AMap_);
       updateAutoBtn();
       if (AUTO_MODE) runAutoFlow();    // ?auto 链接：会话有效直接开跑
+    } else if (d.login_error) {
+      setStatus("err", "自动登录失败: " + d.login_error);
     }
   } catch (e) { /* 忽略 */ }
   renderLoginInfo();

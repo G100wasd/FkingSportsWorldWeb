@@ -218,8 +218,30 @@ def build_track(dist, dur, seed, points_bd, fence_ring=None, ring=None,
         dense, arcs, (c_lat, c_lng) = make_point_ring(points_bd)
     else:
         dense, arcs, (c_lat, c_lng) = ring
-    direction = rng.choice([1.0, -1.0])
-    s = rng.uniform(0.0, arcs[-1] or 400.0)
+    # 行进方向必须匹配打卡点下发序：把点位投到环上取最近弧长，
+    # 下发序的弧长走向(升/降多数票)即推进方向——否则吸附下标严格
+    # 递增会把锚点摊到各圈，末个吸附落在轨迹尾部、平滑窗被边界
+    # 截断，产生横穿场地的直线跳点。
+    total_len = arcs[-1] or 400.0
+
+    def _nearest_s(pt):
+        px = (pt[1] - c_lng) * MET_LNG
+        py = (pt[0] - c_lat) * MET_LAT
+        bi, bs = 0, 1e18
+        for k in range(len(dense)):
+            dd = (dense[k][0] - px) ** 2 + (dense[k][1] - py) ** 2
+            if dd < bs:
+                bi, bs = k, dd
+        return arcs[bi]
+
+    ss = [_nearest_s(p) for p in points_bd] if points_bd else []
+    ups = sum(1 for a, b in zip(ss, ss[1:]) if b > a)
+    direction = (1.0 if ups >= len(ss) - 1 - ups else -1.0) \
+        if len(ss) > 1 else rng.choice([1.0, -1.0])
+    # 起跑点固定在第 1 个打卡点之前 lead 米：首个吸附下标落在
+    # 平滑窗之后，首尾端部不再有"无点可平滑"的瞬移直线
+    s = (ss[0] - direction * rng.uniform(80.0, 120.0)) % total_len \
+        if ss else rng.uniform(0.0, total_len)
     phase_v = rng.uniform(0.0, math.tau)
     phase_l = rng.uniform(0.0, math.tau)
 
@@ -411,10 +433,13 @@ def build_track(dist, dur, seed, points_bd, fence_ring=None, ring=None,
     # 每个打卡点取"上一次吸附之后首次进入容差窗口"内的最近正常点，
     # 即该点在轨迹上的第一次靠近（首个窗口 argmin）。
     tol2 = _T.get("snap_tolerance_m", 40.0) ** 2
+    sw = int(_T.get("snap_smooth_halfwin", 4))
     last_i = -1
     snapped_pts = []
+    lo_b, hi_b = sw + 1, len(locs) - 2 - sw   # 吸附点两侧须留得下平滑窗
     for plat, plng in points_bd:
         best_i, best_d, inside = None, 1e18, False
+        win = []
         for i in range(last_i + 1, len(locs)):
             q = locs[i]
             if q["type"] == -1:
@@ -422,10 +447,16 @@ def build_track(dist, dur, seed, points_bd, fence_ring=None, ring=None,
             dd = ((q["gLat"] - plat) * MET_LAT) ** 2 + \
                  ((q["gLng"] - plng) * MET_LNG) ** 2
             if dd < tol2:
+                win.append(i)
                 if dd < best_d:
                     best_i, best_d, inside = i, dd, True
             elif inside:
                 break            # 离开首个容差窗口：本次靠近的最近点已定
+        if best_i is not None and lo_b <= hi_b \
+                and not (lo_b <= best_i <= hi_b):
+            alt = [i for i in win if lo_b <= i <= hi_b]
+            if alt:
+                best_i = min(alt, key=lambda i: abs(i - best_i))
         if best_i is not None:
             locs[best_i]["gLat"], locs[best_i]["gLng"] = plat, plng
             locs[best_i]["snapped"] = True
@@ -435,7 +466,6 @@ def build_track(dist, dur, seed, points_bd, fence_ring=None, ring=None,
     # 吸附点平滑重拟合：打卡点偏离轨迹线时，单点硬吸附会留下针状外凸。
     # 以打卡点为中锚、两侧窗口端点为边界，用 Catmull-Rom 把该段重采样成
     # 过打卡点的平滑弧线（必过保留，视觉上是"跑出去打点再绕回"的自然弯）。
-    sw = int(_T.get("snap_smooth_halfwin", 4))
     if snapped_pts and sw > 0:
         snap_set = {i for i, _, _ in snapped_pts}
 

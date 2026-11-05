@@ -17,7 +17,7 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    excludes=['torch', 'torchvision', 'matplotlib', 'lxml', 'win32', 'win32com', 'pythonwin', 'pywin32_system32'],
     noarchive=False,
     optimize=0,
 )
