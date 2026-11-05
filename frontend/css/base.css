@@ -58,6 +58,10 @@ body {
 .btn.active { border-color: var(--accent-d); color: var(--accent); background: rgba(217,154,22,.08); }
 .btn:disabled { opacity: .35; cursor: not-allowed; }
 .btn:disabled:hover { color: var(--dim); border-color: var(--ghost); background: transparent; }
+.btn.ok { background: var(--green); border-color: var(--green); color: #fff; }
+.btn.ok:hover { background: var(--green); border-color: var(--green); color: #fff; }
+.btn.fail { background: var(--red); border-color: var(--red); color: #fff; }
+.btn.fail:hover { background: var(--red); border-color: var(--red); color: #fff; }
 #status {
   margin-left: auto;
   display: inline-flex; align-items: center; gap: 8px;

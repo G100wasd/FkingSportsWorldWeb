@@ -43,3 +43,15 @@ async function api(path, body) {
   if (!r.ok) throw new Error(d.detail || ("HTTP " + r.status));
   return d;
 }
+
+// 按钮结果闪烁：绿底 ✓成功 / 红底 ✗失败，1s 后恢复原样
+function flashBtnResult(b, ok, resetText) {
+  b.classList.remove("ok", "fail");
+  b.classList.add(ok ? "ok" : "fail");
+  b.textContent = ok ? "✓ 成功" : "✗ 失败";
+  setTimeout(() => {
+    b.classList.remove("ok", "fail");
+    b.textContent = resetText;
+    b.disabled = false;
+  }, 1000);
+}

@@ -52,6 +52,14 @@ def _receipt_for(run_uuid: str):
     return (cfg_load().get("receipts") or {}).get(run_uuid)
 
 
+def _has_receipt(username: str) -> bool:
+    """该账号是否有成功提交回执（前端"自动跑"按钮的解锁条件之一）。"""
+    if not username:
+        return False
+    return any(r.get("username") == username
+               for r in (cfg_load().get("receipts") or {}).values())
+
+
 def _save_receipt(run_uuid: str, rrid: int, obs_ok: int = 0):
     cfg = cfg_load()
     cfg.setdefault("receipts", {})[run_uuid] = {
@@ -117,6 +125,7 @@ def api_defaults():
 def api_session():
     info = _sess_info(_session)
     info["anchor"] = _anchor_for(_username) if _session else None
+    info["has_receipt"] = _has_receipt(_username) if _session else False
     return info
 
 
@@ -135,6 +144,7 @@ def api_login(body: LoginBody):
         old.logout()  # 顶号前登出旧会话
     info = _sess_info(sess)
     info["anchor"] = _anchor_for(_username)
+    info["has_receipt"] = _has_receipt(_username)
     return info
 
 

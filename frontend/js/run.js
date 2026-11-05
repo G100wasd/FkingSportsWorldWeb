@@ -191,7 +191,7 @@ $("btn-submit").onclick = async () => {
   setRunBlock("busy");
   try {
     const r = await api("/api/submit", {});
-    $("btn-submit").textContent = "✓ 已提交";
+    flashBtnResult($("btn-submit"), true, "提交记录");
     const obsTxt = r.obs_ok != null
       ? `｜OBS ${r.obs_ok}/${r.obs_total}` +
         (r.obs_ok >= r.obs_total ? "" : "（轨迹可能不完整）")
@@ -201,9 +201,9 @@ $("btn-submit").onclick = async () => {
       `<span style="color:var(--green)">` +
       `${r.already ? "该轨迹此前已提交过：" : "√ 提交成功 "}` +
       `rrid=${r.rrid} uuid=${r.uuid}${obsTxt}${verTxt}</span>`;
+    refreshSessionFlags();   // 回执+锚点落盘后刷新自动跑解锁态
   } catch (e) {
-    $("btn-submit").disabled = false;
-    $("btn-submit").textContent = "提交记录";
+    flashBtnResult($("btn-submit"), false, "提交记录");
     $("runarea-info").innerHTML =
       `<span style="color:var(--red)">提交失败：${esc(e.message)}</span>`;
   } finally {

@@ -46,6 +46,8 @@
       setRunBlock("idle");
       await initMap().catch(() => {});
       if (!applyAnchor(d.anchor) && map) locateMe(AMap_);
+      updateAutoBtn();
+      if (AUTO_MODE) runAutoFlow();    // ?auto 链接：会话有效直接开跑
     }
   } catch (e) { /* 忽略 */ }
 })();
