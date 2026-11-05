@@ -471,6 +471,11 @@ if __name__ == "__main__":
 
         threading.Thread(target=_serve, daemon=True).start()
         _wait_port(_port)
+        try:
+            import pyi_splash      # 关启动图：不关会卡死 WebView 窗口的创建
+            pyi_splash.close()
+        except Exception:
+            pass
         import webview
         _title = "wasdSports" if _port == _want else f"wasdSports :{_port}"
         webview.create_window(
