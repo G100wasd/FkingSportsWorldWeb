@@ -1,0 +1,77 @@
+/* ============ 终末地官网向：白主调 + 金琥珀小面积点缀 ============ */
+:root {
+  --bg:      #f4f5f7;
+  --bg2:     #eceef1;
+  --panel:   #ffffff;
+  --panel2:  #f7f8fa;
+  --line:    rgba(15,23,32,.14);
+  --line2:   rgba(15,23,32,.07);
+  --text:    #1c232c;
+  --dim:     #5d6873;
+  --faint:   #96a0ab;
+  --ghost:   #cfd5dc;
+  --accent:  #d99a16;
+  --accent-d:rgba(217,154,22,.30);
+  --warn:    #b7791f;
+  --cyan:    #0e9fb5;
+  --red:     #d64545;
+  --green:   #2ea86b;
+  --mono:    Consolas, "JetBrains Mono", "Courier New", monospace;
+}
+* { box-sizing: border-box; margin: 0; }
+html, body { height: 100%; }
+body {
+  display: flex; flex-direction: column;
+  background: var(--bg); color: var(--text);
+  font-family: "Microsoft YaHei", "Segoe UI", sans-serif;
+  font-size: 13px; overflow: hidden;
+}
+::selection { background: var(--accent-d); }
+
+/* ============ 顶栏 ============ */
+#bar {
+  display: flex; align-items: center; gap: 12px;
+  padding: 0 18px; height: 46px; flex-shrink: 0;
+  background: var(--bg);
+  border-bottom: 1px solid var(--line);
+}
+#bar .logo-img { height: 30px; width: auto; display: block; flex-shrink: 0; }
+#bar input {
+  width: 168px; height: 30px; padding: 0 10px;
+  background: transparent; color: var(--text);
+  border: 1px solid var(--ghost); outline: none;
+  font-family: var(--mono); font-size: 11px; letter-spacing: 1px;
+  transition: border-color .15s;
+}
+#bar input:focus { border-color: var(--accent-d); }
+#bar input::placeholder { color: var(--faint); }
+.btn {
+  height: 30px; padding: 0 16px; cursor: pointer;
+  background: transparent; color: var(--dim);
+  border: 1px solid var(--ghost);
+  font-size: 11px; letter-spacing: 2px; font-family: var(--mono);
+  transition: all .15s;
+}
+.btn:hover { border-color: var(--accent-d); color: var(--accent); }
+.btn.primary { border-color: var(--accent-d); color: var(--accent); }
+.btn.primary:hover { background: var(--accent-d); color: #ffe9b8; }
+.btn.active { border-color: var(--accent-d); color: var(--accent); background: rgba(217,154,22,.08); }
+.btn:disabled { opacity: .35; cursor: not-allowed; }
+.btn:disabled:hover { color: var(--dim); border-color: var(--ghost); background: transparent; }
+#status {
+  margin-left: auto;
+  display: inline-flex; align-items: center; gap: 8px;
+  font-family: var(--mono); font-size: 10px; letter-spacing: 1.5px;
+  color: var(--faint); white-space: nowrap; overflow: hidden;
+}
+#status .dot {
+  width: 7px; height: 7px; transform: rotate(45deg); flex-shrink: 0;
+  border: 1px solid var(--faint);
+}
+#status.on { color: var(--accent); }
+#status.on .dot { background: var(--accent); border-color: var(--accent); }
+#status.busy { color: var(--warn); }
+#status.busy .dot { background: var(--warn); border-color: var(--warn); animation: blink .7s infinite alternate; }
+#status.err { color: var(--red); }
+#status.err .dot { background: var(--red); border-color: var(--red); }
+@keyframes blink { to { opacity: .3; } }

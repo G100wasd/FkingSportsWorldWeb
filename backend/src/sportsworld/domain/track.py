@@ -180,6 +180,30 @@ def _pace_milli(sec, meters):
     return round(sec / 60.0 / (d / 1000.0) * 1000.0) if d > 0 else 0
 
 
+def _cr_seg(p0, p1, p2, p3, t):
+    """Catmull-Rom 单段插值（米制 (x,y)），曲线过 p1→p2。"""
+    t2, t3 = t * t, t * t * t
+    return tuple(
+        0.5 * (2 * p1[k] + (-p0[k] + p2[k]) * t
+               + (2 * p0[k] - 5 * p1[k] + 4 * p2[k] - p3[k]) * t2
+               + (-p0[k] + 3 * p1[k] - 3 * p2[k] + p3[k]) * t3)
+        for k in (0, 1))
+
+
+def _corner_angle(a, b, c):
+    """顶点 b 处轨迹内角（度）：向量 b→a 与 b→c 的夹角。
+    直线=180°，越小越尖锐（发卡弯趋向 0°）。"""
+    ux = (a["gLng"] - b["gLng"]) * MET_LNG
+    uy = (a["gLat"] - b["gLat"]) * MET_LAT
+    vx = (c["gLng"] - b["gLng"]) * MET_LNG
+    vy = (c["gLat"] - b["gLat"]) * MET_LAT
+    lu, lv = math.hypot(ux, uy), math.hypot(vx, vy)
+    if lu < 1e-9 or lv < 1e-9:
+        return 180.0
+    cosv = max(-1.0, min(1.0, (ux * vx + uy * vy) / (lu * lv)))
+    return math.degrees(math.acos(cosv))
+
+
 def build_track(dist, dur, seed, points_bd, fence_ring=None, ring=None,
                 start_ms=0):
     """返回 Track 字典：locations(28键协议点) + 顶层统计 + 衍生指标。
@@ -228,6 +252,15 @@ def build_track(dist, dur, seed, points_bd, fence_ring=None, ring=None,
     def lateral(tt):
         return (wv_a1 * math.sin(math.tau * tt / wv_t1 + wv_p1)
                 + wv_a2 * math.sin(math.tau * tt / wv_t2 + wv_p2))
+
+    # 向内收缩扰动：跑者倾向贴内道，向环心方向叠加一个 0~in_max 的
+    # 慢变偏移（与侧向摆动独立，始终朝内不朝外）
+    in_a = rng.uniform(*_T.get("inward_a", [0.4, 1.2]))
+    in_t = rng.uniform(*_T.get("inward_period_s", [80.0, 160.0]))
+    in_p = rng.uniform(0.0, math.tau)
+
+    def inward(tt):
+        return in_a * (0.5 + 0.5 * math.sin(math.tau * tt / in_t + in_p))
 
     base = dist / dur_f
     # 起步加速段 / 末段减速段：真实 GPS 轨迹两端的速度渐变
@@ -297,10 +330,13 @@ def build_track(dist, dur, seed, points_bd, fence_ring=None, ring=None,
             x, y = ring_point_at(dense, arcs, s)
             tx, ty = ring_tangent(dense, arcs, s)
             lo = lateral(t_acc)
+            iw = inward(t_acc)
+            rr = math.hypot(x, y) or 1.0
             _sig = _T.get("ar1_sigma", 0.35)
             jx = 0.72 * jx + rng.gauss(0.0, _sig)   # AR(1) 稳态 std ≈0.5m
             jy = 0.72 * jy + rng.gauss(0.0, _sig)
-            px, py = x - ty * lo + jx, y + tx * lo + jy
+            px, py = x - ty * lo - (x / rr) * iw + jx, \
+                     y + tx * lo - (y / rr) * iw + jy
             rad = round(rng.uniform(*_T.get("radius_typ3", [1.4, 3.0]))
                         if typ == 3 else rng.uniform(*_T.get("radius_normal", [1.2, 2.0])), 2)
             state = _weighted(rng, [(1, 145), (2, 45), (3, 164)] if typ == 0
@@ -310,7 +346,10 @@ def build_track(dist, dur, seed, points_bd, fence_ring=None, ring=None,
             d_step = rng.uniform(0.0, MAX_DRIFT) if rng.random() >= 0.20 else 0.0
             x, y = ring_point_at(dense, arcs, s)
             tx, ty = ring_tangent(dense, arcs, s)
-            x, y = x - ty * lateral(t_acc), y + tx * lateral(t_acc)
+            iw = inward(t_acc)
+            rr = math.hypot(x, y) or 1.0
+            x, y = x - ty * lateral(t_acc) - (x / rr) * iw, \
+                   y + tx * lateral(t_acc) - (y / rr) * iw
             if d_step > 0:
                 ang = rng.uniform(0.0, math.tau)
                 px, py = x + d_step * math.sin(ang), y + d_step * math.cos(ang)
@@ -373,6 +412,7 @@ def build_track(dist, dur, seed, points_bd, fence_ring=None, ring=None,
     # 即该点在轨迹上的第一次靠近（首个窗口 argmin）。
     tol2 = _T.get("snap_tolerance_m", 40.0) ** 2
     last_i = -1
+    snapped_pts = []
     for plat, plng in points_bd:
         best_i, best_d, inside = None, 1e18, False
         for i in range(last_i + 1, len(locs)):
@@ -390,7 +430,98 @@ def build_track(dist, dur, seed, points_bd, fence_ring=None, ring=None,
             locs[best_i]["gLat"], locs[best_i]["gLng"] = plat, plng
             locs[best_i]["snapped"] = True
             last_i = best_i
+            snapped_pts.append((best_i, plat, plng))
+
+    # 吸附点平滑重拟合：打卡点偏离轨迹线时，单点硬吸附会留下针状外凸。
+    # 以打卡点为中锚、两侧窗口端点为边界，用 Catmull-Rom 把该段重采样成
+    # 过打卡点的平滑弧线（必过保留，视觉上是"跑出去打点再绕回"的自然弯）。
+    sw = int(_T.get("snap_smooth_halfwin", 4))
+    if snapped_pts and sw > 0:
+        snap_set = {i for i, _, _ in snapped_pts}
+
+        def _xy(i):
+            q = locs[i]
+            return q["gLng"] * MET_LNG, q["gLat"] * MET_LAT
+
+        for snap_i, plat, plng in snapped_pts:
+            a_i = max(0, snap_i - sw)
+            while a_i in snap_set and a_i < snap_i:
+                a_i += 1
+            b_i = min(len(locs) - 1, snap_i + sw)
+            while b_i in snap_set and b_i > snap_i:
+                b_i -= 1
+            if a_i >= snap_i or b_i <= snap_i:
+                continue
+            A = _xy(a_i)
+            A0 = _xy(a_i - 1) if a_i > 0 else A
+            B = _xy(b_i)
+            B1 = _xy(b_i + 1) if b_i < len(locs) - 1 else B
+            T_ = (plng * MET_LNG, plat * MET_LAT)
+            for j in range(a_i + 1, b_i):
+                if j == snap_i or j in snap_set:
+                    continue
+                q = locs[j]
+                if q["type"] == -1:
+                    continue
+                if j < snap_i:   # A→打卡点 弧段
+                    t = (j - a_i) / (snap_i - a_i)
+                    x, y = _cr_seg(A0, A, T_, B, t)
+                else:            # 打卡点→B 弧段
+                    t = (j - snap_i) / (b_i - snap_i)
+                    x, y = _cr_seg(A, T_, B, B1, t)
+                q["gLng"] = round(x / MET_LNG, 7)
+                q["gLat"] = round(y / MET_LAT, 7)
+
+    # 已过点弱吸附：打卡点被通过后吸引力降为 snap_post_weight——
+    # 后续圈再次接近时，按高斯衰减向点位收缩（靠近但不保证重合，
+    # 更贴近真实 GPS 轨迹"扫过点附近"的形态）。
+    post_w = _T.get("snap_post_weight", 0.5)
+    post_s2 = 2.0 * (_T.get("snap_post_sigma_m", 12.0) ** 2)
+    for snap_i, plat, plng in snapped_pts:
+        for i in range(snap_i + 1, len(locs)):
+            q = locs[i]
+            if q["type"] == -1:
+                continue
+            dy = (q["gLat"] - plat) * MET_LAT
+            dx = (q["gLng"] - plng) * MET_LNG
+            wgt = post_w * math.exp(-(dx * dx + dy * dy) / post_s2)
+            if wgt < 0.01:
+                continue
+            q["gLat"] = round(q["gLat"] - wgt * dy / MET_LAT, 7)
+            q["gLng"] = round(q["gLng"] - wgt * dx / MET_LNG, 7)
     clamp_to_ring(locs, fence_ring)
+
+    # 尖角重拟合（最后一步，吸附/回拉之后统一收尾）：顶点内角
+    # <= corner_min_deg 判定为发卡尖角，该点连同两侧邻点向各自
+    # 弦中点收缩重拟合该段，迭代收敛；打卡吸附点钉住不动，
+    # 其尖角改为只重拟合邻点来拉直。
+    ang_min = _T.get("corner_min_deg", 100.0)
+    ang_k = _T.get("corner_blend", 0.65)
+    for _ in range(_T.get("corner_iters", 8)):
+        sharp = [i for i in range(1, len(locs) - 1)
+                 if _corner_angle(locs[i - 1], locs[i], locs[i + 1]) <= ang_min]
+        if not sharp:
+            break
+        fix = set()
+        for i in sharp:
+            for j in (i - 1, i, i + 1):
+                if 0 <= j < len(locs) and not locs[j].get("snapped"):
+                    fix.add(j)
+        for j in fix:
+            if 0 < j < len(locs) - 1:
+                tx = (locs[j - 1]["gLng"] + locs[j + 1]["gLng"]) / 2.0
+                ty = (locs[j - 1]["gLat"] + locs[j + 1]["gLat"]) / 2.0
+            elif j == 0 and len(locs) > 2:      # 端点：沿 i1→i2 延长线
+                tx = 2.0 * locs[1]["gLng"] - locs[2]["gLng"]
+                ty = 2.0 * locs[1]["gLat"] - locs[2]["gLat"]
+            elif len(locs) > 2:                  # 端点：沿 i_{-2}→i_{-3} 延长线
+                tx = 2.0 * locs[-2]["gLng"] - locs[-3]["gLng"]
+                ty = 2.0 * locs[-2]["gLat"] - locs[-3]["gLat"]
+            else:
+                continue
+            q = locs[j]
+            q["gLng"] = round(q["gLng"] + (tx - q["gLng"]) * ang_k, 7)
+            q["gLat"] = round(q["gLat"] + (ty - q["gLat"]) * ang_k, 7)
 
     track = {
         "startTime": start_ms,
