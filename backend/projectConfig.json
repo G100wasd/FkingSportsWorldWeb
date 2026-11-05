@@ -66,6 +66,20 @@
       5.0
     ],
     "snap_tolerance_m": 40,
+    "snap_post_weight": 0.5,
+    "snap_post_sigma_m": 12.0,
+    "snap_smooth_halfwin": 4,
+    "corner_min_deg": 100.0,
+    "corner_blend": 0.65,
+    "corner_iters": 8,
+    "inward_a": [
+      0.4,
+      1.2
+    ],
+    "inward_period_s": [
+      80.0,
+      160.0
+    ],
     "drift_gps_speed_kmh": 6.0,
     "gps_zero_p": 0.2,
     "weight_kg": 68.0,
@@ -89,7 +103,6 @@
       "weight": 0.8,
       "radius": 12
     },
-    "lane_width": 2.8,
     "taper_points": 14,
     "sample_rows": 40,
     "lap_colors": [
@@ -101,10 +114,6 @@
       "#d69e2e"
     ]
   },
-  "anchors": {
-    "18818920029": {
-      "lat": 22.906172,
-      "lon": 113.874195
-    }
-  }
+  "anchors": {},
+  "receipts": {}
 }
