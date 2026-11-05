@@ -28,11 +28,44 @@ function deviceLabel(sess_platform) {
          (DEVICE.detected ? "（检测）" : "（桌面伪装）");
 }
 
+// 顶栏与登录卡两套控件：凭据镜像同步，按钮共用同一登录链
+const compact = () => matchMedia("(max-width:768px)").matches;
+function creds() {
+  const u = $("inp-user").value.trim() || $("m-user").value.trim();
+  const p = $("inp-pass").value || $("m-pass").value;
+  return { u, p };
+}
+function setAuthState(logged) {
+  ["btn-auth", "m-auth"].forEach(id => $(id).textContent = logged ? "登出" : "登录");
+}
+function setAuthBusy(b) {
+  ["btn-auth", "m-auth"].forEach(id => $(id).disabled = b);
+}
+function gotoCard(id) {
+  const ic = document.querySelector(`.rail-ico[data-card="${id}"]`);
+  if (ic) goTo(ic);
+}
+
+function renderLoginInfo() {
+  const el = $("login-info"); if (!el) return;
+  const plat = (sess && sess.platform === "ios") ? "iOS" : "Android";
+  const fake = !DEVICE.detected;   // 桌面伪装成 Android
+  const cells = [
+    ["环境", DEVICE.detected ? "手机" : "电脑"],
+    [fake ? "系统·伪装" : "系统", plat + " " + ((sess && sess.os_version) || DEVICE.os_version)],
+    [fake ? "设备·伪装" : "设备", (sess && sess.device_name) || DEVICE.device_name],
+    ["账号", sess ? (sess.name || sess.uid || "已登录") : "未登录"],
+    ["锚点", sess && sess.anchor ? "已保存" : "—"],
+    ["回执", sess && sess.has_receipt ? "已提交" : "—"],
+  ];
+  el.innerHTML = cells.map(([k, v]) =>
+    `<div class="kv"><b>${esc(String(v))}</b><span>${k}</span></div>`).join("");
+}
+
 async function doLogin() {
-  const username = $("inp-user").value.trim();
-  const password = $("inp-pass").value;
+  const { u: username, p: password } = creds();
   if (!username || !password) { setStatus("err", "请输入账号密码"); return; }
-  $("btn-auth").disabled = true;
+  setAuthBusy(true);
   setStatus("busy", "登录中...");
   try {
     sess = await api("/api/login", { username, password, device: DEVICE });
@@ -41,34 +74,46 @@ async function doLogin() {
         `${sess.os_version} ${sess.device_name}`
       : deviceLabel();
     setStatus("on", `已登录 ${sess.name || ""} (uid=${sess.uid}) ｜ ${env}`);
-    $("btn-auth").textContent = "登出";
+    setAuthState(true);
+    renderLoginInfo();
     setRunBlock("idle");
     if (!map) await initMap().catch(e => setStatus("err", "地图加载失败: " + e));
     if (!applyAnchor(sess.anchor) && map) locateMe(AMap_);
     updateAutoBtn();
+    if (compact()) gotoCard("c-anchor");   // 手机端登录后跳回定位卡
     if (AUTO_MODE) runAutoFlow();      // ?auto 链接：登录成功即接自动链
   } catch (e) {
     setStatus("err", e.message);
   } finally {
-    $("btn-auth").disabled = false;
+    setAuthBusy(false);
   }
 }
 
 async function doLogout() {
   await api("/api/logout").catch(() => {});
   sess = null;
-  $("btn-auth").textContent = "登录";
-  const ab = $("btn-auto");
-  ab.disabled = true;
-  ab.classList.remove("ok", "fail");
-  ab.textContent = "自动跑";
+  setAuthState(false);
+  ["btn-auto", "m-auto"].forEach(id => {
+    const ab = $(id);
+    ab.disabled = true;
+    ab.classList.remove("ok", "fail");
+    ab.textContent = "自动跑";
+  });
+  renderLoginInfo();
   $("map-emblem").style.display = "";
   setRunBlock("off");
   setStatus("off", "未登录");
 }
 
 $("btn-auth").onclick = () => { sess ? doLogout() : doLogin(); };
+$("m-auth").onclick = () => { sess ? doLogout() : doLogin(); };
 $("inp-pass").addEventListener("keydown", e => { if (e.key === "Enter") doLogin(); });
+$("m-pass").addEventListener("keydown", e => { if (e.key === "Enter") doLogin(); });
+// 两套输入框镜像
+[["inp-user", "m-user"], ["inp-pass", "m-pass"]].forEach(([a, b]) => {
+  $(a).addEventListener("input", e => $(b).value = e.target.value);
+  $(b).addEventListener("input", e => $(a).value = e.target.value);
+});
 
 /* ---------- 自动跑：锚点+回执双前置，一键 拉点->拟合->提交 ---------- */
 /* ?auto 链接模式：打开后手动登录，登录/会话恢复成功即自动跑；
@@ -77,11 +122,13 @@ const AUTO_Q = new URLSearchParams(location.search);
 const AUTO_MODE = AUTO_Q.has("auto");
 
 function updateAutoBtn() {
-  const b = $("btn-auto");
   const ok = !!(sess && sess.anchor && sess.has_receipt);
-  b.disabled = !ok;
-  b.title = ok ? "一键：拉打卡点 → 拟合 → 提交"
-               : "需要该账号有保存的锚点且成功提交过一次";
+  ["btn-auto", "m-auto"].forEach(id => {
+    const b = $(id);
+    b.disabled = !ok;
+    b.title = ok ? "一键：拉打卡点 → 拟合 → 提交"
+                 : "需要该账号有保存的锚点且成功提交过一次";
+  });
 }
 
 async function refreshSessionFlags() {
@@ -100,11 +147,11 @@ function autoGoal() {
   return g;
 }
 
-async function runAutoFlow() {
+async function runAutoFlow(btn) {
   if (!sess) return;
   const lat = parseFloat(AUTO_Q.get("lat")), lon = parseFloat(AUTO_Q.get("lon"));
   const a = (isFinite(lat) && isFinite(lon)) ? { lat, lon } : sess.anchor;
-  const b = $("btn-auto");
+  const b = btn || $("btn-auto");
   if (!a) {
     flashBtnResult(b, false, "自动跑");
     setStatus("err", "无锚点：链接带 ?lat=&lon= 或该账号先拟合过一次");
@@ -138,7 +185,9 @@ async function runAutoFlow() {
   }
 }
 
-$("btn-auto").onclick = runAutoFlow;
+$("btn-auto").onclick = e => runAutoFlow(e.currentTarget);
+$("m-auto").onclick = e => runAutoFlow(e.currentTarget);
+renderLoginInfo();
 
 $("btn-manual").onclick = () => {
   if (!DEVICE.detected) {

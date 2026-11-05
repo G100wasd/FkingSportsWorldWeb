@@ -7,6 +7,7 @@
 <link rel="stylesheet" href="/static/css/base.css">
 <link rel="stylesheet" href="/static/css/cards.css">
 <link rel="stylesheet" href="/static/css/map.css">
+<link rel="stylesheet" href="/static/css/mobile.css">
 </head>
 <body>
 
@@ -17,7 +18,7 @@
   <input id="inp-pass" type="password" placeholder="PWD&nbsp;密码" autocomplete="current-password">
   <button class="btn primary" id="btn-auth">登录</button>
   <button class="btn" id="btn-auto" disabled title="需要该账号有保存的锚点且成功提交过一次">自动跑</button>
-  <span id="status"><span class="dot"></span><span id="status-txt">OFFLINE</span></span>
+  <span id="status" class="statusline"><span class="dot"></span><span id="status-txt">OFFLINE</span></span>
 </div>
 
 <div id="content">
@@ -25,6 +26,12 @@
   <!-- ================= 左侧 icon 栏 ================= -->
   <div id="rail">
     <div class="rail-marker"></div>
+    <div class="rail-ico map-ico" id="rail-map" title="地图">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.1">
+        <path d="M2 3.5l4-1.5 4 1.5 4-1.5v9l-4 1.5-4-1.5-4 1.5z"/>
+        <path d="M6 2v9M10 3.5v9"/>
+      </svg>
+    </div>
     <div class="rail-ico active" title="定位" data-card="c-anchor">
       <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.1">
         <path d="M8 1.6c-2.8 0-4.8 2-4.8 4.6 0 3.5 4.8 8.2 4.8 8.2s4.8-4.7 4.8-8.2c0-2.6-2-4.6-4.8-4.6z"/>
@@ -59,6 +66,12 @@
       <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.1">
         <circle cx="8" cy="8" r="5.6"/>
         <path d="M6.8 5.6v4.8l4.2-2.4z" fill="currentColor" stroke="none"/>
+      </svg>
+    </div>
+    <div class="rail-ico" title="登录" data-card="c-login">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.1">
+        <circle cx="8" cy="5.2" r="2.6"/>
+        <path d="M2.8 13.5c.6-2.8 2.7-4.3 5.2-4.3s4.6 1.5 5.2 4.3"/>
       </svg>
     </div>
   </div>
@@ -188,6 +201,31 @@
         </div>
         <div class="hint" id="manual-hint">手动跑步模式 — 仅手机环境可用。</div>
       </div></div>
+    </div>
+
+    <div class="card" id="c-login">
+      <div class="card-head">
+        <span class="idx">07/</span><span class="cn">登录</span>
+        <span class="en">Login&nbsp;·&nbsp;Device</span>
+      </div>
+      <div class="card-body"><div class="body-inner">
+        <div class="row"><label>账号 uid</label><input id="m-user" spellcheck="false" autocomplete="username"></div>
+        <div class="row"><label>密码 pwd</label><input id="m-pass" type="password" autocomplete="current-password"></div>
+        <div class="btn-row">
+          <button class="btn primary" id="m-auth">登录</button>
+          <button class="btn" id="m-auto" disabled title="需要该账号有保存的锚点且成功提交过一次">自动跑</button>
+        </div>
+        <div class="login-status">
+          <span class="statusline" id="m-status"><span class="dot"></span><span id="m-status-txt">OFFLINE</span></span>
+        </div>
+        <div class="sect"><span>设备 · 会话信息</span><i>//</i></div>
+        <div class="kv-grid" id="login-info"></div>
+        <div class="hint">凭据保存于服务端配置，刷新自动恢复会话；登出清除凭据。</div>
+      </div></div>
+      <div class="card-foot">
+        <button class="btn" data-nav="-1">上一页</button>
+        <button class="btn" data-nav="1" disabled>下一页</button>
+      </div>
     </div>
 
     </div>

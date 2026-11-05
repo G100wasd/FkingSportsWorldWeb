@@ -1,0 +1,67 @@
+/* ============ 紧凑布局：手机 & 窗口过窄的 PC ============ */
+/* 最小可用宽度 320px；断点内 卡片全屏 + rail切地图 */
+
+/* 桌面端隐藏地图切换图标（桌面地图常显，不需要） */
+.rail-ico.map-ico { display: none; }
+
+@media (max-width: 768px) {
+
+  body { min-width: 320px; }
+
+  /* —— 顶栏：只显示 logo（登录/状态移入 07 登录卡） —— */
+  #bar { padding: 0; justify-content: center; }
+  #bar .logo-img { height: 24px; }
+  #bar input, #bar .btn, #status { display: none; }
+
+  /* —— 卡片视图：占满 rail 之外全部宽度 —— */
+  #splitter { display: none; }
+  #panel {
+    flex: 1; width: auto; min-width: 0; max-width: none;
+    padding: 10px 8px;
+  }
+  .card { height: calc(100vh - 46px - 20px); }  /* panel padding 同步收窄 */
+  .card-body { padding: 12px 12px 10vh; }
+  .body-inner { max-width: none; }
+
+  /* —— 触控目标加高 —— */
+  .row input { height: 34px; }
+  .btn-row .btn { height: 34px; }
+  .row input[type=range] { height: auto; }
+  .rail-ico { width: 40px; height: 40px; }
+
+  /* —— 按钮文字永不折行 —— */
+  .btn { white-space: nowrap; }
+
+  /* —— 地图：默认藏，rail 地图图标切出 —— */
+  .rail-ico.map-ico { display: flex; }
+  #map-zone { display: none; }
+  #content.map-open #panel { display: none; }
+  #content.map-open #map-zone { display: block; }
+}
+
+/* —— 超窄屏（≤480px）：字号/间距整体下调 —— */
+@media (max-width: 480px) {
+
+  body { font-size: 12px; }
+
+  #bar .logo-img { height: 20px; }
+
+  /* 卡片头压缩 */
+  .card-head { padding-top: 16px; }
+  .card-head .cn { font-size: 14px; letter-spacing: 2px; }
+  .card-head .en { font-size: 7px; letter-spacing: 2px; }
+  .card-body { padding: 10px 10px 8vh; }
+
+  /* 按钮行：小字小距，保证三按钮一行放下 */
+  .btn-row { gap: 4px; }
+  .btn-row .btn { height: 30px; padding: 0 2px; font-size: 10px; letter-spacing: 0; }
+  .card-foot .btn { letter-spacing: 1px; }
+
+  /* 表单标签缩窄让位给输入框 */
+  .row label { width: 56px; font-size: 10.5px; }
+  .hint { font-size: 10px; }
+
+  /* 统计格/详情表微调 */
+  .kv b { font-size: 12px; }
+  .detail-sec table { font-size: 10px; }
+}

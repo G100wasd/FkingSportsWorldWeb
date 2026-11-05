@@ -1,7 +1,7 @@
 /* ---------- 全局状态 / 通用工具 ---------- */
 const $ = id => document.getElementById(id);
 const esc = s => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;");
-const statusEl = $("status"), statusText = $("status-txt");
+// #status(顶栏) 与 #m-status(登录卡) 共用 .statusline 样式，setStatus 双写
 let map = null, sess = null, AMap_ = null;
 let locMarker = null, picking = false;
 let overlays = [];
@@ -20,8 +20,11 @@ let lastFit = null;
 let FE = { run: {}, frontend: {} };
 
 function setStatus(cls, text) {
-  statusEl.className = cls;
-  statusText.textContent = text;
+  [["status", "status-txt"], ["m-status", "m-status-txt"]].forEach(([a, b]) => {
+    const el = $(a), t = $(b);
+    if (el) el.className = "statusline " + cls;
+    if (t) t.textContent = text;
+  });
 }
 
 // 左下状态块：off=未登录灰三角 // idle=待机金三角 // busy=作业中

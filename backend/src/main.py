@@ -28,10 +28,51 @@ FRONTEND_DIR = Path(__file__).resolve().parents[2] / "frontend"
 app = FastAPI(title="NekoSportsWorld Web")
 app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")
 
-# 单用户本地应用：只保留一个登录会话；锁保护登录/登出竞态
+# 登录态唯一事实源 = projectConfig.json 的 account；
+# _sess_cache 只是进程内缓存，避免每个请求都重登（GT4 验证+限流）
 _lock = threading.Lock()
-_session = None
-_username = ""          # 当前会话登录名（锚点按账号区分）
+_sess_cache = {"sess": None, "key": None}
+
+
+def _account() -> dict:
+    return (cfg_load().get("account") or {})
+
+
+def _current_user() -> str:
+    return _account().get("username") or ""
+
+
+def _save_account(username: str, password: str, device):
+    cfg = cfg_load()
+    cfg["account"] = {"username": username, "password": password,
+                      "device": device or {}}
+    cfg_save(cfg)
+
+
+def _clear_account():
+    cfg = cfg_load()
+    cfg["account"] = {"username": "", "password": ""}
+    cfg_save(cfg)
+
+
+def get_session():
+    """从 json 凭据取会话：凭据不变复用已登录会话，否则重新登录。"""
+    acc = _account()
+    u, p = acc.get("username") or "", acc.get("password") or ""
+    if not u or not p:
+        raise HTTPException(401, "请先登录")
+    key = (u, p)
+    with _lock:
+        sess = _sess_cache["sess"]
+        if sess is not None and _sess_cache["key"] == key:
+            return sess
+    sess = login(u, p, identity=default_identity(acc.get("device")))
+    with _lock:
+        old = _sess_cache["sess"] if _sess_cache["key"] != key else None
+        _sess_cache["sess"], _sess_cache["key"] = sess, key
+    if old is not None:
+        old.logout()   # 凭据已变更：登出旧账号的会话
+    return sess
 
 
 def _anchor_for(username: str):
@@ -63,7 +104,7 @@ def _has_receipt(username: str) -> bool:
 def _save_receipt(run_uuid: str, rrid: int, obs_ok: int = 0):
     cfg = cfg_load()
     cfg.setdefault("receipts", {})[run_uuid] = {
-        "rrid": rrid, "username": _username, "obs_ok": obs_ok,
+        "rrid": rrid, "username": _current_user(), "obs_ok": obs_ok,
         "ts": int(dt.datetime.now().timestamp() * 1000)}
     cfg_save(cfg)
 
@@ -112,7 +153,7 @@ def index():
 @app.get("/api/defaults")
 def api_defaults():
     """前端默认值：凭据预填 + run/frontend 两组配置下发（JSON 单一来源）。"""
-    acc = CFG.get("account") or {}
+    acc = _account()
     return {
         "username": acc.get("username", ""),
         "password": acc.get("password", ""),
@@ -123,38 +164,47 @@ def api_defaults():
 
 @app.get("/api/session")
 def api_session():
-    info = _sess_info(_session)
-    info["anchor"] = _anchor_for(_username) if _session else None
-    info["has_receipt"] = _has_receipt(_username) if _session else False
+    # 凭据在则自动重登（登录持久化），失败视为未登录
+    try:
+        sess = get_session()
+    except Exception:
+        sess = None
+    uname = _current_user() if sess else ""
+    info = _sess_info(sess)
+    info["anchor"] = _anchor_for(uname) if sess else None
+    info["has_receipt"] = _has_receipt(uname) if sess else False
     return info
 
 
 @app.post("/api/login")
 def api_login(body: LoginBody):
-    global _session, _username
+    u = body.username.strip()
     try:
-        sess = login(body.username.strip(), body.password,
+        sess = login(u, body.password,
                      identity=default_identity(body.device))
     except Exception as e:
         raise HTTPException(502, f"登录失败: {e}")
+    _save_account(u, body.password, body.device)
     with _lock:
-        old, _session = _session, sess
-        _username = body.username.strip()
+        key = (u, body.password)
+        old = _sess_cache["sess"] if _sess_cache["key"] != key else None
+        _sess_cache["sess"], _sess_cache["key"] = sess, key
     if old is not None:
         old.logout()  # 顶号前登出旧会话
     info = _sess_info(sess)
-    info["anchor"] = _anchor_for(_username)
-    info["has_receipt"] = _has_receipt(_username)
+    info["anchor"] = _anchor_for(u)
+    info["has_receipt"] = _has_receipt(u)
     return info
 
 
 @app.post("/api/logout")
 def api_logout():
-    global _session, _username, _last_fit
+    global _last_fit
     with _lock:
-        sess, _session = _session, None
-        _username = ""
+        sess = _sess_cache["sess"]
+        _sess_cache["sess"], _sess_cache["key"] = None, None
         _last_fit = None
+    _clear_account()
     if sess is not None:
         sess.logout()
     return _sess_info(None)
@@ -170,13 +220,12 @@ _last_fit = None     # 最近一次拟合的提交载荷 {body, run_uuid, policy
 def api_points(body: AnchorBody):
     """按锚点拉实时打卡点：后台自动完成 围栏 -> 计分跑申请 -> 取点。"""
     global _last_fences, _last_area, _last_anchor, _last_fit
-    if _session is None:
-        raise HTTPException(401, "请先登录")
+    sess = get_session()
     _last_anchor = (body.lat, body.lon)
     _last_fit = None          # 新点位使旧拟合作废，防止误提交过期数据
     if _last_fences is None:
         try:
-            _last_fences = runarea.fetch_fences(_session)
+            _last_fences = runarea.fetch_fences(sess)
         except Exception as e:
             traceback.print_exc()
             raise HTTPException(502, f"拉取围栏失败: {e}")
@@ -185,7 +234,7 @@ def api_points(body: AnchorBody):
         fake_ms = int(dt.datetime.combine(
             dt.date.today(), dt.time(12, 0)).timestamp() * 1000)
         _last_area = runarea.fetch_area_points(
-            _session, _last_fences, body.lat, body.lon, ts_ms=fake_ms)
+            sess, _last_fences, body.lat, body.lon, ts_ms=fake_ms)
     except Exception as e:
         traceback.print_exc()
         raise HTTPException(502, f"拉取打卡点失败: {e}")
@@ -207,8 +256,7 @@ def api_points(body: AnchorBody):
 def api_fit(body: FitBody):
     """阶段二：对暂存的打卡点做体育场拟合 + 轨迹生成（纯本地，不触发限流）。"""
     global _last_fit
-    if _session is None:
-        raise HTTPException(401, "请先登录")
+    sess = get_session()
     if _last_area is None:
         raise HTTPException(409, "请先获取打卡点")
     if not (100.0 <= body.dist <= 50000.0) or not (30 <= body.dur <= 14400):
@@ -228,7 +276,7 @@ def api_fit(body: FitBody):
         raise HTTPException(502, f"拟合/轨迹生成失败: {e}")
     if _last_anchor:
         try:
-            _save_anchor(_username, _last_anchor[0], _last_anchor[1])
+            _save_anchor(_current_user(), _last_anchor[0], _last_anchor[1])
         except Exception:
             traceback.print_exc()   # 锚点持久化失败不影响拟合结果
     perim = fit["perimeter"] or 1.0
@@ -242,8 +290,8 @@ def api_fit(body: FitBody):
         freedom_show_fence=area.get("freedom_show_fence", False))
     scoring = area.get("scoring") or {}
     record_body, run_uuid = submit.build_record_body(
-        trk, uid=_session.uid,
-        selected_unid=int(_session.unid) if str(_session.unid).isdigit() else 0,
+        trk, uid=sess.uid,
+        selected_unid=int(sess.unid) if str(sess.unid).isdigit() else 0,
         policy=scoring.get("policy") or 0,
         min_distance=int(scoring.get("minDistance") or 0),
         face_check=_RUN.get("face_check", 0),
@@ -253,7 +301,7 @@ def api_fit(body: FitBody):
     # track/five_point 供 OBS 对象复用（fixed_point_json 与提交体同源）
     _last_fit = {"body": record_body, "run_uuid": run_uuid,
                  "policy_ts": scoring.get("policy_ts") or "",
-                 "username": _username, "track": trk,
+                 "username": _current_user(), "track": trk,
                  "five_point": five_point}
     return {
         "track_bd": fit["track_bd"],
@@ -305,11 +353,10 @@ def api_fit(body: FitBody):
 @app.post("/api/submit")
 def api_submit():
     """提交最近一次拟合的记录：save/record 双层信封 POST -> rrid -> 本地回执。"""
-    if _session is None:
-        raise HTTPException(401, "请先登录")
+    sess = get_session()
     if _last_fit is None:
         raise HTTPException(409, "请先拟合轨迹")
-    if _last_fit["username"] != _username:
+    if _last_fit["username"] != _current_user():
         raise HTTPException(409, "拟合数据属于其他账号，请重新拟合")
     run_uuid = _last_fit["run_uuid"]
     old = _receipt_for(run_uuid)
@@ -318,7 +365,7 @@ def api_submit():
                 "obs_ok": old.get("obs_ok", 0), "obs_total": 2}
     try:
         result = submit.submit_record(
-            _session, _last_fit["body"], run_uuid,
+            sess, _last_fit["body"], run_uuid,
             _last_fit["policy_ts"])
     except submit.SubmitRejected as e:
         raise HTTPException(502, str(e))
@@ -334,12 +381,12 @@ def api_submit():
     try:
         time.sleep(1)
         obj = wire.build_obs_object(
-            _last_fit["track"], rrid, run_uuid, _session.uid,
+            _last_fit["track"], rrid, run_uuid, sess.uid,
             _last_fit["five_point"])
         obs_keys = wire.obs_keys(_last_fit["track"], rrid, run_uuid)
         payload = json.dumps(obj, separators=(",", ":"),
                              ensure_ascii=False).encode("utf-8")
-        obs_ok = obs.upload_both_keys(_session, obs_keys, payload)
+        obs_ok = obs.upload_both_keys(sess, obs_keys, payload)
     except Exception:
         traceback.print_exc()
     _save_receipt(run_uuid, rrid, obs_ok)
@@ -348,7 +395,7 @@ def api_submit():
     verified = False
     try:
         time.sleep(2)
-        verified = bool(records.fetch_one_record(_session, rrid))
+        verified = bool(records.fetch_one_record(sess, rrid))
     except Exception:
         traceback.print_exc()
 
@@ -360,8 +407,12 @@ def api_submit():
 
 @app.on_event("shutdown")
 def _on_shutdown():
-    # 后端进程退出时自动登出，避免账号残留登录态触发 10121
-    api_logout()
+    # 退出时只登出内存会话，不清 json 凭据——重启后自动重登
+    with _lock:
+        sess = _sess_cache["sess"]
+        _sess_cache["sess"], _sess_cache["key"] = None, None
+    if sess is not None:
+        sess.logout()
 
 
 if __name__ == "__main__":

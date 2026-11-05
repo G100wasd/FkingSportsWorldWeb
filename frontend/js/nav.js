@@ -33,6 +33,17 @@ function goTo(icon) {
 }
 document.querySelectorAll(".rail-ico").forEach(i =>
   i.addEventListener("click", () => goTo(i)));
+
+// 紧凑模式地图切换：地图图标进地图视图，点任何卡图标回卡片视图
+const contentEl = $("content"), mapIco = $("rail-map");
+mapIco.addEventListener("click", () => {
+  contentEl.classList.add("map-open");
+  document.querySelectorAll(".rail-ico").forEach(j =>
+    j.classList.toggle("active", j === mapIco));
+  marker.style.transform = `translateY(${mapIco.offsetTop + 10}px)`;
+});
+document.querySelectorAll(".rail-ico[data-card]").forEach(i =>
+  i.addEventListener("click", () => contentEl.classList.remove("map-open")));
 // 卡片底部翻页按钮：按 data-nav 偏移切卡
 document.querySelectorAll(".card-foot .btn").forEach(b =>
   b.addEventListener("click", () => {

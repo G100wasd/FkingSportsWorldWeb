@@ -3,8 +3,8 @@
   try {
     const d = await fetch("/api/defaults").then(r => r.json());
     FE = d;
-    if (d.username) $("inp-user").value = d.username;
-    if (d.password) $("inp-pass").value = d.password;
+    if (d.username) { $("inp-user").value = d.username; $("m-user").value = d.username; }
+    if (d.password) { $("inp-pass").value = d.password; $("m-pass").value = d.password; }
     const R = d.run || {}, F = d.frontend || {}, C = F.ctrl || {};
     CFG_DEFAULT_DIST = R.default_dist ?? CFG_DEFAULT_DIST;
     CFG_DEFAULT_DUR = R.default_dur ?? CFG_DEFAULT_DUR;
@@ -42,7 +42,7 @@
         : "";
       setStatus("on", `已登录 ${d.name || ""} (uid=${d.uid})` +
                 (env ? ` ｜ ${env}` : ""));
-      $("btn-auth").textContent = "登出";
+      setAuthState(true);
       setRunBlock("idle");
       await initMap().catch(() => {});
       if (!applyAnchor(d.anchor) && map) locateMe(AMap_);
@@ -50,4 +50,7 @@
       if (AUTO_MODE) runAutoFlow();    // ?auto 链接：会话有效直接开跑
     }
   } catch (e) { /* 忽略 */ }
+  renderLoginInfo();
+  // 手机端未登录：默认落登录卡
+  if (!sess && compact()) gotoCard("c-login");
 })();

@@ -62,20 +62,20 @@ body {
 .btn.ok:hover { background: var(--green); border-color: var(--green); color: #fff; }
 .btn.fail { background: var(--red); border-color: var(--red); color: #fff; }
 .btn.fail:hover { background: var(--red); border-color: var(--red); color: #fff; }
-#status {
-  margin-left: auto;
+#status { margin-left: auto; }
+.statusline {
   display: inline-flex; align-items: center; gap: 8px;
   font-family: var(--mono); font-size: 10px; letter-spacing: 1.5px;
   color: var(--faint); white-space: nowrap; overflow: hidden;
 }
-#status .dot {
+#status .dot, .statusline .dot {
   width: 7px; height: 7px; transform: rotate(45deg); flex-shrink: 0;
   border: 1px solid var(--faint);
 }
-#status.on { color: var(--accent); }
-#status.on .dot { background: var(--accent); border-color: var(--accent); }
-#status.busy { color: var(--warn); }
-#status.busy .dot { background: var(--warn); border-color: var(--warn); animation: blink .7s infinite alternate; }
-#status.err { color: var(--red); }
-#status.err .dot { background: var(--red); border-color: var(--red); }
+#status.on, .statusline.on { color: var(--accent); }
+#status.on .dot, .statusline.on .dot { background: var(--accent); border-color: var(--accent); }
+#status.busy, .statusline.busy { color: var(--warn); }
+#status.busy .dot, .statusline.busy .dot { background: var(--warn); border-color: var(--warn); animation: blink .7s infinite alternate; }
+#status.err, .statusline.err { color: var(--red); }
+#status.err .dot, .statusline.err .dot { background: var(--red); border-color: var(--red); }
 @keyframes blink { to { opacity: .3; } }
