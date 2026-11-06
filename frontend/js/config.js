@@ -106,3 +106,43 @@ function updateCfgHint() {
 function fitGoal() {
   return { dist: cfgDist(), dur: cfgEffDur(), start_ms: resolveStartMs() };
 }
+
+/* 保存按钮：当前输入值持久化到服务端 projectConfig.json 的 run 段；
+   拟合/提交链路随后以 JSON 落盘值为准（boot 时全量回填各输入框）。 */
+$("btn-cfg-save").onclick = async () => {
+  const btn = $("btn-cfg-save");
+  btn.disabled = true;
+  try {
+    const startRaw = halfWidth(($("cfg-start").value || "").trim());
+    const payload = {
+      default_dist: cfgDist(),
+      default_dur: cfgEffDur(),
+    };
+    if (/^([01]?\d|2[0-3]):[0-5]\d$/.test(startRaw))
+      payload.default_start = startRaw.padStart(5, "0");
+    const altRaw = parseFloat(halfWidth(($("cfg-alt").value || "").trim()));
+    if (Number.isFinite(altRaw) && altRaw > 0) payload.alt_cap = altRaw;
+    const r = await api("/api/config", payload);
+    CFG_DEFAULT_DIST = r.run.default_dist ?? CFG_DEFAULT_DIST;
+    CFG_DEFAULT_DUR = r.run.default_dur ?? CFG_DEFAULT_DUR;
+    CFG_DEF_START = r.run.default_start || CFG_DEF_START;
+    if (r.run.start_jitter_min) CFG_JITTER = r.run.start_jitter_min;
+    if (r.run.start_window) [CFG_START_LO, CFG_START_HI] = r.run.start_window;
+    if (r.track?.alt_cap) $("cfg-alt").value = r.track.alt_cap;
+    flashBtnResult(btn, true, "保存配置");
+    updateCfgHint();
+    // 已有拟合结果 → 用新配置自动重算，让拟合卡同步最新配置
+    // （服务端已同时作废旧提交载荷，不刷新会提交与配置不符的记录）
+    if (lastFit && lastFit.locs && lastFit.locs.length) {
+      $("cfg-hint").innerHTML +=
+        `<br><span style="color:var(--warn)">配置已更新，重新拟合中…</span>`;
+      doFit();
+    }
+  } catch (e) {
+    flashBtnResult(btn, false, "保存配置");
+    $("cfg-hint").innerHTML =
+      `<span style="color:var(--red)">保存失败：${esc(e.message)}</span>`;
+  } finally {
+    btn.disabled = false;
+  }
+};

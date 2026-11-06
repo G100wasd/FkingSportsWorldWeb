@@ -54,7 +54,6 @@ def default_identity(device: dict | None = None) -> dict:
     """设备身份。device={platform,device_name,os_version} 来自前端探测；
     缺省按"非手机→默认安卓红米 22081212C/Android 14"全流程伪装。
     device_id/app_install_time 为空时逐请求随机/回退。"""
-    import secrets as _secrets
     device = device or {}
     platform = device.get("platform") or "android"
     if platform == "ios":
@@ -69,11 +68,50 @@ def default_identity(device: dict | None = None) -> dict:
         "device_id": "",
         "device_name": dev_name,
         "os_version": os_ver,
-        "mac_address": "08:a4:%02x:%02x:%02x:%02x" % tuple(
-            _secrets.randbelow(256) for _ in range(4)),
+        "mac_address": _gen_mac(),
         "app_install_time": 0,
         "idfa": "",
     }
+
+
+def _gen_mac() -> str:
+    import secrets as _secrets
+    return "08:a4:%02x:%02x:%02x:%02x" % tuple(
+        _secrets.randbelow(256) for _ in range(4))
+
+
+def stable_identity(username: str, device: dict | None = None) -> dict:
+    """按账号持久化的设备指纹（对齐 Rust model.rs::load_identity）。
+
+    device_id / app_install_time / mac_address 首次生成即落盘，
+    此后该账号整个生命周期复用——逐请求/逐登录漂移是服务端设备
+    画像里最刺眼的非真人指纹。platform/device_name/os_version
+    同样首登即固化（真实手机不会换型号）。
+    """
+    from ..config import load as _cfg_load, save as _cfg_save
+    cfg = _cfg_load()
+    ids = cfg.setdefault("identities", {})
+    rec = dict(ids.get(username) or {})
+    if not rec:
+        base = default_identity(device)
+        now_ms = int(time.time() * 1000)
+        platform = base["platform"]
+        # 安装时间：android 30-180 天前，iOS 2-10 天前（对齐 Rust 语义）
+        days = (30.0, 180.0) if platform == "android" else (2.0, 10.0)
+        rec = {
+            "platform": platform,
+            "device_name": base["device_name"],
+            "os_version": base["os_version"],
+            "device_id": str(uuid.uuid4()).upper(),
+            "mac_address": _gen_mac(),
+            "app_install_time": now_ms - int(
+                (days[0] + (days[1] - days[0])
+                 * uuid.uuid4().int / (1 << 128)) * 86_400_000),
+            "idfa": "",
+        }
+        ids[username] = rec
+        _cfg_save(cfg)
+    return dict(rec)
 
 
 def gee_check(client: httpx.Client, session: EnvelopeSession, identity: dict, username: str) -> bool:

@@ -23,13 +23,24 @@ from pydantic import BaseModel
 from sportsworld.config import CFG, load as cfg_load, save as cfg_save
 from sportsworld.domain import stadium, track, wire
 from sportsworld.services import obs, records, runarea, submit
-from sportsworld.services.auth import default_identity, login
+from sportsworld.services.auth import login, stable_identity
 
 FRONTEND_DIR = (Path(sys._MEIPASS) / "frontend"
                 if getattr(sys, "frozen", False)
                 else Path(__file__).resolve().parents[2] / "frontend")
 
 app = FastAPI(title="wasdSports Web")
+
+
+@app.middleware("http")
+async def _no_cache_static(req, call_next):
+    """静态资源禁缓存：前端 JS/CSS 改动无需手动清浏览器缓存。"""
+    resp = await call_next(req)
+    if req.url.path == "/" or req.url.path.startswith("/static/"):
+        resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
 app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")
 
 # 登录态唯一事实源 = projectConfig.json 的 account；
@@ -70,7 +81,7 @@ def get_session():
         sess = _sess_cache["sess"]
         if sess is not None and _sess_cache["key"] == key:
             return sess
-    sess = login(u, p, identity=default_identity(acc.get("device")))
+    sess = login(u, p, identity=stable_identity(u, acc.get("device")))
     with _lock:
         old = _sess_cache["sess"] if _sess_cache["key"] != key else None
         _sess_cache["sess"], _sess_cache["key"] = sess, key
@@ -130,10 +141,11 @@ _RUN = CFG.get("run") or {}
 
 
 class FitBody(BaseModel):
-    """拟合目标：距离（米）+ 用时（秒）+ 伪装起跑时刻（毫秒时间戳）。"""
-    dist: float = _RUN.get("default_dist", 2200.0)
-    dur: int = _RUN.get("default_dur", 720)
-    start_ms: int = 0   # 0 = 未提供
+    """拟合目标：距离（米）+ 用时（秒）+ 伪装起跑时刻（毫秒时间戳）。
+    0/未提供时回退到 projectConfig.json 的 run 段（配置卡"保存"的值）。"""
+    dist: float = 0.0
+    dur: int = 0
+    start_ms: int = 0
 
 
 def _sess_info(sess):
@@ -151,7 +163,9 @@ def _sess_info(sess):
 
 @app.get("/")
 def index():
-    return FileResponse(FRONTEND_DIR / "index.html")
+    # no-store：本地工具页面每次拿最新 HTML，避免旧缓存掩盖前端改动
+    return FileResponse(FRONTEND_DIR / "index.html",
+                        headers={"Cache-Control": "no-store"})
 
 
 @app.get("/api/defaults")
@@ -162,8 +176,41 @@ def api_defaults():
         "username": acc.get("username", ""),
         "password": acc.get("password", ""),
         "run": _RUN,
+        "track": {"alt_cap": (CFG.get("track") or {}).get("alt_cap", 55.5)},
         "frontend": CFG.get("frontend") or {},
     }
+
+
+class RunConfigBody(BaseModel):
+    """配置卡"保存"提交体：只认字段级更新，未给字段保持原值。"""
+    default_dist: float | None = None
+    default_dur: int | None = None
+    default_start: str | None = None
+    start_jitter_min: list | None = None
+    start_window: list | None = None
+    alt_cap: float | None = None          # 生成的最大海拔（track 段）
+
+
+@app.post("/api/config")
+def api_config(body: RunConfigBody):
+    """持久化跑步配置到 projectConfig.json 的 run 段（重启后生效）。"""
+    global _last_fit
+    cfg = cfg_load()
+    run = cfg.setdefault("run", {})
+    for k in ("default_dist", "default_dur", "default_start",
+              "start_jitter_min", "start_window"):
+        v = getattr(body, k, None)
+        if v is not None and v != "":
+            run[k] = v
+    if body.alt_cap is not None and body.alt_cap > 0:
+        cfg.setdefault("track", {})["alt_cap"] = body.alt_cap
+        # CFG["track"] 与 track._T 是同一字典对象：原地更新即运行期生效
+        (CFG.setdefault("track", {}))["alt_cap"] = body.alt_cap
+    cfg_save(cfg)
+    _RUN.update(run)   # FitBody 默认值在类定义时已绑定；同步字典让后续读取生效
+    _last_fit = None   # 配置已变：旧拟合的提交载荷作废，防止提交与新配置不符的记录
+    return {"run": _RUN,
+            "track": {"alt_cap": (CFG.get("track") or {}).get("alt_cap", 55.5)}}
 
 
 @app.get("/api/session")
@@ -188,7 +235,7 @@ def api_login(body: LoginBody):
     u = body.username.strip()
     try:
         sess = login(u, body.password,
-                     identity=default_identity(body.device))
+                     identity=stable_identity(u, body.device))
     except Exception as e:
         raise HTTPException(502, f"登录失败: {e}")
     _save_account(u, body.password, body.device)
@@ -221,12 +268,13 @@ _last_fences = None  # 最近一次拉取的围栏数据（限流外，复用于
 _last_area = None    # 最近一次拉取的跑步区域（供 /api/fit 复用，避免重复拉点）
 _last_anchor = None  # 最近一次取点的锚点 (lat, lon) = 前端提交的 GCJ-02 原值
 _last_fit = None     # 最近一次拟合的提交载荷 {body, run_uuid, policy_ts, username}
+_last_points_ts = 0  # 最近一次拉点时刻（ms）：记录起点默认对齐它
 
 
 @app.post("/api/points")
 def api_points(body: AnchorBody):
     """按锚点拉实时打卡点：后台自动完成 围栏 -> 计分跑申请 -> 取点。"""
-    global _last_fences, _last_area, _last_anchor, _last_fit
+    global _last_fences, _last_area, _last_anchor, _last_fit, _last_points_ts
     sess = get_session()
     _last_anchor = (body.lat, body.lon)
     _last_fit = None          # 新点位使旧拟合作废，防止误提交过期数据
@@ -237,11 +285,10 @@ def api_points(body: AnchorBody):
             traceback.print_exc()
             raise HTTPException(502, f"拉取围栏失败: {e}")
     try:
-        # 与 _fence_test 一致：假 12:00 时间戳 + 顶层 runAreaId
-        fake_ms = int(dt.datetime.combine(
-            dt.date.today(), dt.time(12, 0)).timestamp() * 1000)
+        # 真实当前时间：假正午戳与请求日志时间矛盾是审计指纹
+        _last_points_ts = int(dt.datetime.now().timestamp() * 1000)
         _last_area = runarea.fetch_area_points(
-            sess, _last_fences, body.lat, body.lon, ts_ms=fake_ms)
+            sess, _last_fences, body.lat, body.lon, ts_ms=_last_points_ts)
     except Exception as e:
         traceback.print_exc()
         raise HTTPException(502, f"拉取打卡点失败: {e}")
@@ -266,15 +313,25 @@ def api_fit(body: FitBody):
     sess = get_session()
     if _last_area is None:
         raise HTTPException(409, "请先获取打卡点")
-    if not (100.0 <= body.dist <= 50000.0) or not (30 <= body.dur <= 14400):
-        raise HTTPException(400, "目标距离/用时超出合理范围")
     area = _last_area
-    start_ms = body.start_ms or int(dt.datetime.now().timestamp() * 1000)
+    dist = body.dist or _RUN.get("default_dist", 2200.0)
+    dur = body.dur or _RUN.get("default_dur", 720)
+    if not (100.0 <= dist <= 50000.0) or not (30 <= dur <= 14400):
+        raise HTTPException(400, "目标距离/用时超出合理范围")
+    # 起跑时刻：优先对齐拉点时刻（真实流程=拉到点后开跑）；
+    # 未提供或会导致"记录尚未结束就提交"时，回拨到 now-dur-margin
+    now_ms = int(dt.datetime.now().timestamp() * 1000)
+    start_ms = body.start_ms or (
+        _last_points_ts if _last_points_ts
+        and _last_points_ts + (dur + 60) * 1000 <= now_ms
+        else now_ms - (dur + 60) * 1000)
+    if start_ms + dur * 1000 > now_ms - 10_000:
+        start_ms = now_ms - (dur + 60) * 1000
     try:
         dense, arcs, center, fit = stadium.make_stadium_ring(
             area["points_bd"], area["ref_center"], area["stadium_ring"])
         trk = track.build_track(
-            body.dist, body.dur, None, area["points_bd"],
+            dist, dur, None, area["points_bd"],
             fence_ring=area["stadium_ring"], ring=(dense, arcs, center),
             start_ms=start_ms)
         locs = trk["locations"]

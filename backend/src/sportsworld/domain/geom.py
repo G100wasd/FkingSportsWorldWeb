@@ -125,18 +125,49 @@ def stadium_fence_index(polys, bd_pts):
     return best
 
 
+def _nearest_on_ring(ring_xy, px, py):
+    """多边形边界上距 (px,py) 最近的点（局部米制）。"""
+    best, bp = 1e18, (0.0, 0.0)
+    j = len(ring_xy) - 1
+    for i in range(len(ring_xy)):
+        xi, yi = ring_xy[i]
+        xj, yj = ring_xy[j]
+        vx, vy = xi - xj, yi - yj
+        vv = vx * vx + vy * vy
+        t = 0.0 if vv <= 0 else max(0.0, min(1.0, ((px - xj) * vx + (py - yj) * vy) / vv))
+        cx, cy = xj + t * vx, yj + t * vy
+        d = (px - cx) ** 2 + (py - cy) ** 2
+        if d < best:
+            best, bp = d, (cx, cy)
+        j = i
+    return bp
+
+
 def clamp_to_ring(locs, ring) -> None:
-    """出界点向围栏质心二分回拉，直到进入场内（保留大致形状）。"""
+    """出界点投影到围栏最近边界（略带内向 epsilon）。
+
+    吸附锚点(snapped)豁免：打卡点可能合法落在围栏外，拉走会破坏锚点。
+    旧实现向质心二分回拉——环形带/凹形围栏下离场点被压向场心，
+    折线出现"环->场心->环"的横穿直线；改为投影到最近边界点。
+    """
     if not ring:
         return
     clat = sum(p[0] for p in ring) / len(ring)
     clng = sum(p[1] for p in ring) / len(ring)
+    ring_xy = [ll_to_xy(la, lo, (clat, clng)) for la, lo in ring]
     for q in locs:
-        for _ in range(12):
-            if in_ring(ring, q["gLat"], q["gLng"]):
-                break
-            q["gLat"] = clat + (q["gLat"] - clat) * 0.5
-            q["gLng"] = clng + (q["gLng"] - clng) * 0.5
+        if q.get("snapped"):
+            continue
+        if in_ring(ring, q["gLat"], q["gLng"]):
+            continue
+        px, py = ll_to_xy(q["gLat"], q["gLng"], (clat, clng))
+        bx, by = _nearest_on_ring(ring_xy, px, py)
+        # 沿 越界点->投影点 方向越过边界一小步即局部内侧
+        dx, dy = bx - px, by - py
+        d = math.hypot(dx, dy) or 1.0
+        step = max(0.3, 0.05 * d)
+        bx, by = bx + dx / d * step, by + dy / d * step
+        q["gLat"], q["gLng"] = xy_to_ll(bx, by, (clat, clng))
 
 
 def ring_point_at(dense, arcs, s):

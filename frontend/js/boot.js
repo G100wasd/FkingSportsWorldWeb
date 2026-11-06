@@ -19,7 +19,10 @@
     ctrlWeight = C.weight ?? ctrlWeight;
     ctrlRadius = C.radius ?? ctrlRadius;
     $("cfg-dist").value = CFG_DEFAULT_DIST;
-    $("cfg-dur").placeholder = fmtDur(CFG_DEFAULT_DUR) + "（默认）";
+    $("cfg-dur").value = fmtDur(CFG_DEFAULT_DUR);
+    $("cfg-speed").value = (CFG_DEFAULT_DIST / CFG_DEFAULT_DUR).toFixed(2);
+    $("cfg-start").value = CFG_DEF_START;
+    $("cfg-alt").value = d.track?.alt_cap ?? 55.5;
     $("ctrl-count").max = C.max || 10;
     $("ctrl-count").value = ctrlTotal;
     $("ctrl-count-val").textContent = ctrlTotal;
