@@ -23,6 +23,8 @@
     $("cfg-speed").value = (CFG_DEFAULT_DIST / CFG_DEFAULT_DUR).toFixed(2);
     $("cfg-start").value = CFG_DEF_START;
     $("cfg-alt").value = d.track?.alt_cap ?? 55.5;
+    $("cfg-cadmax").value = d.track?.cad_max ?? 260;
+    $("cfg-stride").value = d.track?.stride_mean ?? 1.2;
     $("ctrl-count").max = C.max || 10;
     $("ctrl-count").value = ctrlTotal;
     $("ctrl-count-val").textContent = ctrlTotal;

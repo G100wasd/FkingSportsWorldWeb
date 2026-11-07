@@ -176,7 +176,9 @@ def api_defaults():
         "username": acc.get("username", ""),
         "password": acc.get("password", ""),
         "run": _RUN,
-        "track": {"alt_cap": (CFG.get("track") or {}).get("alt_cap", 55.5)},
+        "track": {"alt_cap": (CFG.get("track") or {}).get("alt_cap", 55.5),
+                  "cad_max": (CFG.get("track") or {}).get("cad_max", 260),
+                  "stride_mean": (CFG.get("track") or {}).get("stride_mean", 1.2)},
         "frontend": CFG.get("frontend") or {},
     }
 
@@ -189,6 +191,8 @@ class RunConfigBody(BaseModel):
     start_jitter_min: list | None = None
     start_window: list | None = None
     alt_cap: float | None = None          # 生成的最大海拔（track 段）
+    cad_max: float | None = None          # 生成的最大步频（track 段）
+    stride_mean: float | None = None      # 生成步幅均值 m（track 段）
 
 
 @app.post("/api/config")
@@ -206,11 +210,19 @@ def api_config(body: RunConfigBody):
         cfg.setdefault("track", {})["alt_cap"] = body.alt_cap
         # CFG["track"] 与 track._T 是同一字典对象：原地更新即运行期生效
         (CFG.setdefault("track", {}))["alt_cap"] = body.alt_cap
+    if body.cad_max is not None and body.cad_max > 0:
+        cfg.setdefault("track", {})["cad_max"] = body.cad_max
+        (CFG.setdefault("track", {}))["cad_max"] = body.cad_max
+    if body.stride_mean is not None and body.stride_mean > 0:
+        cfg.setdefault("track", {})["stride_mean"] = body.stride_mean
+        (CFG.setdefault("track", {}))["stride_mean"] = body.stride_mean
     cfg_save(cfg)
     _RUN.update(run)   # FitBody 默认值在类定义时已绑定；同步字典让后续读取生效
     _last_fit = None   # 配置已变：旧拟合的提交载荷作废，防止提交与新配置不符的记录
     return {"run": _RUN,
-            "track": {"alt_cap": (CFG.get("track") or {}).get("alt_cap", 55.5)}}
+            "track": {"alt_cap": (CFG.get("track") or {}).get("alt_cap", 55.5),
+                      "cad_max": (CFG.get("track") or {}).get("cad_max", 260),
+                      "stride_mean": (CFG.get("track") or {}).get("stride_mean", 1.2)}}
 
 
 @app.get("/api/session")
@@ -395,6 +407,8 @@ def api_fit(body: FitBody):
             "snapped": sum(1 for q in locs if q.get("snapped")),
             "total_steps": trk["totalSteps"],
             "step_freq": trk["avgStepFreq"],
+            "max_step_freq": trk.get("maxStepFreq"),
+            "max_stride": trk.get("maxStride"),
             "calorie": trk["calorie"],
             "avg_power": trk["avgPower"],
             "ascent_m": trk["totalAscent"],

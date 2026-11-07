@@ -78,6 +78,12 @@ async function doLogin() {
     renderLoginInfo();
     setRunBlock("idle");
     if (!map) await initMap().catch(e => setStatus("err", "地图加载失败: " + e));
+    else {
+      // 登出时遮罩(map-emblem)被重新显示而 map 实例仍在：
+      // 跳过 initMap 分支需手动关遮罩并刷新尺寸，否则地图被占位图盖住
+      $("map-emblem").style.display = "none";
+      map.resize();
+    }
     if (!applyAnchor(sess.anchor) && map) locateMe(AMap_);
     updateAutoBtn();
     if (compact()) gotoCard("c-anchor");   // 手机端登录后跳回定位卡
@@ -162,10 +168,21 @@ async function runAutoFlow(btn) {
   b.textContent = "执行中…";
   setRunBlock("busy");
   try {
-    setStatus("busy", "自动流程：拉取打卡点…");
-    await api("/api/points", { lat: +a.lat, lon: +a.lon });
-    setStatus("busy", "自动流程：拟合轨迹…");
-    await api("/api/fit", autoGoal());
+    // 拟合可能无可行解：与手动 doFit 同策略——重新拉点重试，
+    // 拉取达 MAX_REFIT 次仍失败才报红字
+    for (let attempt = 1; attempt <= MAX_REFIT; attempt++) {
+      setStatus("busy", `自动流程：拉取打卡点` +
+        (attempt > 1 ? `（第 ${attempt}/${MAX_REFIT} 次）` : "…"));
+      await api("/api/points", { lat: +a.lat, lon: +a.lon });
+      setStatus("busy", "自动流程：拟合轨迹…");
+      try {
+        await api("/api/fit", autoGoal());
+        break;
+      } catch (e) {
+        if (!e.message.includes("无可行解") || attempt >= MAX_REFIT) throw e;
+        setStatus("busy", `拟合无可行解，重新拉点重试…`);
+      }
+    }
     setStatus("busy", "自动流程：提交记录…");
     const r = await api("/api/submit", {});
     flashBtnResult(b, true, "自动跑");

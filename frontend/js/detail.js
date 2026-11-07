@@ -220,6 +220,8 @@ function renderSummary(sum, adjustedMeters) {
     kv(`${sum.avg_speed_mps} m/s`, "AVG SPD") +
     kv(sum.total_steps ?? "-", "STEPS") +
     kv(`${sum.step_freq ?? "-"} spm`, "CADENCE") +
+    kv(sum.max_step_freq != null ? `${sum.max_step_freq} spm` : "-", "MAX CAD") +
+    kv(sum.max_stride != null ? `${sum.max_stride} m` : "-", "MAX STR") +
     kv(`${sum.calorie ?? "-"} kcal`, "CAL") +
     kv(`${sum.avg_power ?? "-"} W`, "POWER") +
     kv(`${sum.ascent_m ?? "-"} m`, "ASCENT") +
@@ -229,7 +231,8 @@ function renderSummary(sum, adjustedMeters) {
   if (sum.start_ms) {
     const d = new Date(sum.start_ms);
     const p = n => String(n).padStart(2, "0");
-    html += kv(`${p(d.getHours())}:${p(d.getMinutes())}`, "START");
+    html += kv(`${p(d.getMonth() + 1)}-${p(d.getDate())}`, "DATE") +
+            kv(`${p(d.getHours())}:${p(d.getMinutes())}`, "START");
   }
   $("fit-summary").innerHTML = `<div class="kv-grid">${html}</div>`;
 }

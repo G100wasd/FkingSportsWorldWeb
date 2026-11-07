@@ -148,7 +148,8 @@ def build_track(dist, dur, seed, points_bd, fence_ring=None, ring=None,
         # 步频/步数
         if typ != -1:
             v_cad_prev = disp[i] / dt_i
-        cad = cadence.cadence_at(rng, v_cad_prev, t_acc, phase_l)
+        cad = cadence.cadence_at(rng, v_cad_prev, t_acc, phase_l,
+                                 dist / max(dur_f, 1.0))
         steps_acc += cad / 60.0 * dt_i
 
         alt_v = alts[i]

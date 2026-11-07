@@ -127,6 +127,7 @@ function renderFit(d, retried) {
     `直道 ${f.straight.toFixed(0)}m + 半圆 r=${f.radius.toFixed(0)}m | 周长 ${f.perimeter.toFixed(0)}m | 轨迹 ${d.locs.length} 点<br>` +
     `误差 均=${f.mean_err.toFixed(1)}m 最大=${f.max_err.toFixed(1)}m | 边界余量 ${f.fence_margin.toFixed(1)}m | 锚点 ${snapIdx.length} 个`;
   if (editing) buildControls();
+  flashBtnResult($("btn-fit"), true, "拟合轨迹", "拟合完成");
 }
 
 function fitError(msg) {

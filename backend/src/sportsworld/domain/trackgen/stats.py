@@ -76,6 +76,21 @@ def finalize(track):
     """重建窗口/分段并汇总衍生指标（爬升/卡路里/功率/步频/配速）。"""
     rebuild(track)
     locs = track["locations"]
+    # 本次最大值：步频取点间 Δsteps/Δt 峰值的硬上限校验值；
+    # 步幅取点间隐含步幅(Δdis/Δsteps)的 95 分位——整数步数量化
+    # 会造出偶发极大值，硬 max 对显示无意义
+    max_cad, impl = 0.0, []
+    for a, b in zip(locs, locs[1:]):
+        dt = b["totalTime"] - a["totalTime"]
+        dst = b["steps"] - a["steps"]
+        ddis = b["totalDis"] - a["totalDis"]
+        if dt > 0 and dst > 0:
+            max_cad = max(max_cad, dst / dt * 60.0)
+            if ddis > 0:
+                impl.append(ddis / dst)
+    track["maxStepFreq"] = round(max_cad)
+    track["maxStride"] = round(sorted(impl)[int(0.95 * (len(impl) - 1))], 2) \
+        if impl else 0.0
     track["totalAscent"] = round(total_ascent(locs))
     track["calorie"] = official_kcal(WEIGHT_KG, track["totalTime"],
                                      track["totalDistance"])

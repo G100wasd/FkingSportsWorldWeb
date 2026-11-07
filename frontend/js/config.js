@@ -45,6 +45,20 @@ $("cfg-dur").addEventListener("input", () => {
   if (d) $("cfg-speed").value = (cfgDist() / d).toFixed(2);
   updateCfgHint();
 });
+/* 步频×步幅÷60=均速：给定卡片速度，两者只独立其一。
+   持久化的是步幅(stride_mean)，步频为联动显示/输入入口。 */
+function syncCadStride(src) {
+  const v = cfgDist() / cfgEffDur();
+  if (!(v > 0)) return;
+  const cad = parseFloat(halfWidth(($("cfg-cad").value || "").trim()));
+  const str = parseFloat(halfWidth(($("cfg-stride").value || "").trim()));
+  if (src === "cad" && Number.isFinite(cad) && cad > 0)
+    $("cfg-stride").value = (v * 60.0 / cad).toFixed(2);
+  else if (src === "stride" && Number.isFinite(str) && str > 0)
+    $("cfg-cad").value = (v * 60.0 / str).toFixed(0);
+}
+$("cfg-cad").addEventListener("input", () => syncCadStride("cad"));
+$("cfg-stride").addEventListener("input", () => syncCadStride("stride"));
 $("cfg-start").addEventListener("input", () => {
   startCache = null;
   updateCfgHint();
@@ -102,6 +116,7 @@ function updateCfgHint() {
     `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}` +
     ` ｜ ${cfgDist().toFixed(0)}m · ${fmtDur(cfgEffDur())} · ` +
     `${(cfgDist() / cfgEffDur()).toFixed(2)} m/s`;
+  syncCadStride("stride");   // 速度变化后步频按已持久化的步幅重算
 }
 function fitGoal() {
   return { dist: cfgDist(), dur: cfgEffDur(), start_ms: resolveStartMs() };
@@ -122,6 +137,17 @@ $("btn-cfg-save").onclick = async () => {
       payload.default_start = startRaw.padStart(5, "0");
     const altRaw = parseFloat(halfWidth(($("cfg-alt").value || "").trim()));
     if (Number.isFinite(altRaw) && altRaw > 0) payload.alt_cap = altRaw;
+    const cadRaw = parseFloat(halfWidth(($("cfg-cadmax").value || "").trim()));
+    if (Number.isFinite(cadRaw) && cadRaw > 0) payload.cad_max = cadRaw;
+    let strRaw = parseFloat(halfWidth(($("cfg-stride").value || "").trim()));
+    if (!(Number.isFinite(strRaw) && strRaw > 0)) {
+      // 步幅留空但步频有效 → 由 v=cad·str/60 反推步幅入库
+      const cadIn = parseFloat(halfWidth(($("cfg-cad").value || "").trim()));
+      const v = cfgDist() / cfgEffDur();
+      if (Number.isFinite(cadIn) && cadIn > 0 && v > 0)
+        strRaw = v * 60.0 / cadIn;
+    }
+    if (Number.isFinite(strRaw) && strRaw > 0) payload.stride_mean = strRaw;
     const r = await api("/api/config", payload);
     CFG_DEFAULT_DIST = r.run.default_dist ?? CFG_DEFAULT_DIST;
     CFG_DEFAULT_DUR = r.run.default_dur ?? CFG_DEFAULT_DUR;
@@ -129,6 +155,8 @@ $("btn-cfg-save").onclick = async () => {
     if (r.run.start_jitter_min) CFG_JITTER = r.run.start_jitter_min;
     if (r.run.start_window) [CFG_START_LO, CFG_START_HI] = r.run.start_window;
     if (r.track?.alt_cap) $("cfg-alt").value = r.track.alt_cap;
+    if (r.track?.cad_max) $("cfg-cadmax").value = r.track.cad_max;
+    if (r.track?.stride_mean) $("cfg-stride").value = r.track.stride_mean;
     flashBtnResult(btn, true, "保存配置");
     updateCfgHint();
     // 已有拟合结果 → 用新配置自动重算，让拟合卡同步最新配置
@@ -136,7 +164,8 @@ $("btn-cfg-save").onclick = async () => {
     if (lastFit && lastFit.locs && lastFit.locs.length) {
       $("cfg-hint").innerHTML +=
         `<br><span style="color:var(--warn)">配置已更新，重新拟合中…</span>`;
-      doFit();
+      // 拟合结束刷新 hint 会整体重写，黄字自然消失（失败信息在区域卡显示）
+      doFit().finally(() => updateCfgHint());
     }
   } catch (e) {
     flashBtnResult(btn, false, "保存配置");
