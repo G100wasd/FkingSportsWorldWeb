@@ -74,6 +74,25 @@ function resetResultCard() {
   $("stats-hint").style.display = "";
   $("btn-submit").disabled = true;
   $("btn-submit").textContent = "提交记录";
+  const w = $("submit-warn");
+  if (w) w.textContent = "";
+}
+
+/* 提交时间戳警告：记录结束早于当前 >10min 时提交，服务端日志里
+   "结束时刻"与"上传时刻"间隔过大，与真机跑完即传的行为不符，
+   有被追缴风险。拟合渲染时评估 + 30s 周期复评（ staleness 只增
+   不减，跨过阈值自动出现）；提交点击时再复查一次。 */
+let _warnTimer = null;
+function updateSubmitWarn() {
+  const w = $("submit-warn");
+  if (!w) return;
+  const s = lastFit && lastFit.summary;
+  let ago = null;
+  if (s && s.start_ms && s.duration_s)
+    ago = Math.round((Date.now() - s.start_ms - s.duration_s * 1000) / 60000);
+  w.textContent = (ago != null && ago > 10)
+    ? `⚠ 记录结束于 ${ago} 分钟前：时间戳与服务器日志对不上，提交可能被追缴`
+    : "";
 }
 
 function renderFit(d, retried) {
@@ -128,6 +147,14 @@ function renderFit(d, retried) {
     `误差 均=${f.mean_err.toFixed(1)}m 最大=${f.max_err.toFixed(1)}m | 边界余量 ${f.fence_margin.toFixed(1)}m | 锚点 ${snapIdx.length} 个`;
   if (editing) buildControls();
   flashBtnResult($("btn-fit"), true, "拟合轨迹", "拟合完成");
+  updateSubmitWarn();
+  if (!_warnTimer) _warnTimer = setInterval(updateSubmitWarn, 30000);
+  // 若该 uuid 已在定时队列中（刷新/重进后恢复显示）
+  $("btn-cancel-submit").style.display = "none";
+  fetch("/api/submit/status").then(r => r.json()).then(st => {
+    const j = (st.pending || []).find(j => j.run_uuid === d.run_uuid);
+    if (j) watchQueue(d.run_uuid, j.fire_at);
+  }).catch(() => {});
 }
 
 function fitError(msg) {
@@ -185,13 +212,75 @@ async function doFit() {
 
 $("btn-points").onclick = fetchPoints;
 $("btn-fit").onclick = doFit;
+/* 定时提交队列 UI：按钮显示倒计时，旁挂"取消排队"；
+   每 15s 轮询状态直到该 uuid 出队（执行完/被取消）。 */
+let _queueTicker = null, _queuePoll = null;
+function watchQueue(uuid, fireAt) {
+  clearInterval(_queueTicker); clearInterval(_queuePoll);
+  $("btn-cancel-submit").style.display = "";
+  $("btn-submit").disabled = true;
+  const tick = () => {
+    const left = Math.max(0, Math.round((fireAt - Date.now()) / 1000));
+    $("btn-submit").textContent =
+      left > 0 ? `自动提交 ${fmtDur(left)}` : "提交中…";
+  };
+  tick();
+  _queueTicker = setInterval(tick, 1000);
+  _queuePoll = setInterval(async () => {
+    try {
+      const st = await fetch("/api/submit/status").then(r => r.json());
+      if ((st.pending || []).some(j => j.run_uuid === uuid)) return;
+      clearInterval(_queueTicker); clearInterval(_queuePoll);
+      $("btn-cancel-submit").style.display = "none";
+      const lr = st.last;
+      if (lr && lr.run_uuid === uuid && lr.ok) {
+        $("btn-submit").textContent = "✓ 已自动提交";
+        $("runarea-info").innerHTML =
+          `<span style="color:var(--green)">定时提交完成：` +
+          `rrid=${lr.rrid} uuid=${uuid} ｜OBS ${lr.obs_ok}/2` +
+          `${lr.verified ? " ｜已回读" : ""}</span>`;
+        refreshSessionFlags();
+      } else {
+        $("btn-submit").disabled = false;
+        $("btn-submit").textContent = "提交记录";
+      }
+    } catch (_) {}
+  }, 15000);
+}
+$("btn-cancel-submit").onclick = async () => {
+  try { await api("/api/submit/cancel", {}); } catch (e) {
+    $("runarea-info").innerHTML =
+      `<span style="color:var(--red)">取消失败：${esc(e.message)}</span>`;
+    return;
+  }
+  clearInterval(_queueTicker); clearInterval(_queuePoll);
+  $("btn-cancel-submit").style.display = "none";
+  $("btn-submit").disabled = false;
+  $("btn-submit").textContent = "提交记录";
+  $("runarea-info").innerHTML =
+    `<span style="color:var(--warn)">已取消排队提交</span>`;
+};
+
 $("btn-submit").onclick = async () => {
   if (!lastFit || !lastFit.locs || !lastFit.locs.length) return;
+  updateSubmitWarn();   // 点击时再复查一次，跨过阈值立即显示
   $("btn-submit").disabled = true;
-  $("btn-submit").textContent = "提交中…";
+  $("btn-submit").textContent = "排队中…";
   setRunBlock("busy");
   try {
     const r = await api("/api/submit", {});
+    if (r.scheduled) {
+      const t = new Date(r.fire_at);
+      const p = n => String(n).padStart(2, "0");
+      flashBtnResult($("btn-submit"), true, "提交记录", "已排队");
+      $("runarea-info").innerHTML =
+        `<span style="color:var(--warn)">已加入定时提交队列：` +
+        `将于 ${p(t.getHours())}:${p(t.getMinutes())}:${p(t.getSeconds())} ` +
+        `自动提交（约 ${Math.max(1, Math.round(r.eta_s / 60))} 分钟后，` +
+        `服务端视角 = 拉点→跑完→上传）</span>`;
+      watchQueue(r.uuid, r.fire_at);
+      return;
+    }
     flashBtnResult($("btn-submit"), true, "提交记录");
     const obsTxt = r.obs_ok != null
       ? `｜OBS ${r.obs_ok}/${r.obs_total}` +

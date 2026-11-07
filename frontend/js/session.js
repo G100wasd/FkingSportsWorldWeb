@@ -107,6 +107,8 @@ async function doLogout() {
   });
   renderLoginInfo();
   $("map-emblem").style.display = "";
+  const w = $("submit-warn");
+  if (w) w.textContent = "";
   setRunBlock("off");
   setStatus("off", "未登录");
 }
@@ -185,6 +187,14 @@ async function runAutoFlow(btn) {
     }
     setStatus("busy", "自动流程：提交记录…");
     const r = await api("/api/submit", {});
+    if (r.scheduled) {
+      flashBtnResult(b, true, "自动跑");
+      setStatus("on", `自动跑已排队，约 ${Math.max(1, Math.round(r.eta_s / 60))} 分钟后自动提交`);
+      $("runarea-info").innerHTML =
+        `<span style="color:var(--warn)">自动流程完成：已加入定时提交队列，到点自动提交</span>`;
+      watchQueue(r.uuid, r.fire_at);
+      return;
+    }
     flashBtnResult(b, true, "自动跑");
     setStatus("on", `自动完成 rrid=${r.rrid}` +
       (r.obs_ok != null ? ` ｜ OBS ${r.obs_ok}/${r.obs_total}` : "") +

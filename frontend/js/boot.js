@@ -8,8 +8,6 @@
     const R = d.run || {}, F = d.frontend || {}, C = F.ctrl || {};
     CFG_DEFAULT_DIST = R.default_dist ?? CFG_DEFAULT_DIST;
     CFG_DEFAULT_DUR = R.default_dur ?? CFG_DEFAULT_DUR;
-    CFG_DEF_START = R.default_start || CFG_DEF_START;
-    CFG_JITTER = R.start_jitter_min || CFG_JITTER;
     if (R.start_window) [CFG_START_LO, CFG_START_HI] = R.start_window;
     MAX_REFIT = F.max_refit ?? MAX_REFIT;
     LAP_COLORS = F.lap_colors || LAP_COLORS;
@@ -21,7 +19,7 @@
     $("cfg-dist").value = CFG_DEFAULT_DIST;
     $("cfg-dur").value = fmtDur(CFG_DEFAULT_DUR);
     $("cfg-speed").value = (CFG_DEFAULT_DIST / CFG_DEFAULT_DUR).toFixed(2);
-    $("cfg-start").value = CFG_DEF_START;
+    // 日期/伪装时间不回填：留空 = 本地当前日期/时刻（会话值不落盘）
     $("cfg-alt").value = d.track?.alt_cap ?? 55.5;
     $("cfg-cadmax").value = d.track?.cad_max ?? 260;
     $("cfg-stride").value = d.track?.stride_mean ?? 1.2;

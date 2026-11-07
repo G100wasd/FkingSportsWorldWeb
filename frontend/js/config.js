@@ -1,8 +1,6 @@
 /* ---------- 跑步配置 ---------- */
 let CFG_DEFAULT_DIST = 2200, CFG_DEFAULT_DUR = 720;
 let CFG_START_LO = 6, CFG_START_HI = 22;
-let CFG_DEF_START = "15:30";
-let CFG_JITTER = [1, 5];
 let TAPER_PTS = 14;
 let SAMPLE_ROWS = 40;
 
@@ -81,29 +79,16 @@ function computeStart() {
   const dv = ($("cfg-date").value || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
   const m = raw.match(/^([01]?\d|2[0-3]):([0-5]\d)$/);
   const inWin = m && +m[1] >= CFG_START_LO && +m[1] < CFG_START_HI;
-  const [dh, dm] = CFG_DEF_START.split(":").map(Number);
-  const jitter = (CFG_JITTER[0] +
-    Math.floor(Math.random() * (CFG_JITTER[1] - CFG_JITTER[0] + 1))) *
-    (Math.random() < .5 ? -1 : 1);
   const sec = Math.floor(Math.random() * 60);
-  const applyTime = d => inWin
-    ? d.setHours(+m[1], +m[2], sec, 0)
-    : d.setHours(dh, dm + jitter, sec, 0);
-  const p = n => String(n).padStart(2, "0");
 
-  let base = dv ? new Date(+dv[1], +dv[2] - 1, +dv[3]) : new Date();
-  applyTime(base);
-  let ms = base.getTime(), warn = null;
-  if (ms + durMs > Date.now()) {
-    warn = "所选起跑时间尚未发生，已自动调整为当天日期";
-    const now = new Date();
-    $("cfg-date").value =
-      `${now.getFullYear()}-${p(now.getMonth() + 1)}-${p(now.getDate())}`;
-    base = new Date();
-    applyTime(base);
-    ms = base.getTime();
-    if (ms + durMs > Date.now()) ms -= 86400000;
-  }
+  // 日期/伪装时间为会话值不落盘：留空=本地当前日期/时刻；
+  // 窗口内显式时刻才覆写（窗口外按未配置处理 → 本地当前时刻）。
+  // 结束在未来合法：定时队列会等到 end+delay 再提交，不再回拨。
+  const base = dv ? new Date(+dv[1], +dv[2] - 1, +dv[3]) : new Date();
+  if (inWin) base.setHours(+m[1], +m[2], sec, 0);
+  const ms = base.getTime();
+  const warn = (inWin && ms + durMs > Date.now())
+    ? "所选起跑的结束时刻在当前之后，将排队至结束后自动提交" : null;
   return { ms, warn };
 }
 
@@ -128,13 +113,10 @@ $("btn-cfg-save").onclick = async () => {
   const btn = $("btn-cfg-save");
   btn.disabled = true;
   try {
-    const startRaw = halfWidth(($("cfg-start").value || "").trim());
     const payload = {
       default_dist: cfgDist(),
       default_dur: cfgEffDur(),
     };
-    if (/^([01]?\d|2[0-3]):[0-5]\d$/.test(startRaw))
-      payload.default_start = startRaw.padStart(5, "0");
     const altRaw = parseFloat(halfWidth(($("cfg-alt").value || "").trim()));
     if (Number.isFinite(altRaw) && altRaw > 0) payload.alt_cap = altRaw;
     const cadRaw = parseFloat(halfWidth(($("cfg-cadmax").value || "").trim()));
@@ -151,8 +133,6 @@ $("btn-cfg-save").onclick = async () => {
     const r = await api("/api/config", payload);
     CFG_DEFAULT_DIST = r.run.default_dist ?? CFG_DEFAULT_DIST;
     CFG_DEFAULT_DUR = r.run.default_dur ?? CFG_DEFAULT_DUR;
-    CFG_DEF_START = r.run.default_start || CFG_DEF_START;
-    if (r.run.start_jitter_min) CFG_JITTER = r.run.start_jitter_min;
     if (r.run.start_window) [CFG_START_LO, CFG_START_HI] = r.run.start_window;
     if (r.track?.alt_cap) $("cfg-alt").value = r.track.alt_cap;
     if (r.track?.cad_max) $("cfg-cadmax").value = r.track.cad_max;
