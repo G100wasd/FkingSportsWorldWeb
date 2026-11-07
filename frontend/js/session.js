@@ -56,7 +56,7 @@ function renderLoginInfo() {
     [fake ? "设备·伪装" : "设备", (sess && sess.device_name) || DEVICE.device_name],
     ["账号", sess ? (sess.name || sess.uid || "已登录") : "未登录"],
     ["锚点", sess && sess.anchor ? "已保存" : "—"],
-    ["回执", sess && sess.has_receipt ? "已提交" : "—"],
+    ["自动跑", sess && sess.auto ? "已解锁" : "—"],
   ];
   el.innerHTML = cells.map(([k, v]) =>
     `<div class="kv"><b>${esc(String(v))}</b><span>${k}</span></div>`).join("");
@@ -69,6 +69,7 @@ async function doLogin() {
   setStatus("busy", "登录中...");
   try {
     sess = await api("/api/login", { username, password, device: DEVICE });
+    clearRunState();   // 服务端已作废旧点位/拟合，本地同步清空
     const env = sess.platform
       ? `${sess.platform === "android" ? "Android" : "iOS"} ` +
         `${sess.os_version} ${sess.device_name}`
@@ -98,6 +99,7 @@ async function doLogin() {
 async function doLogout() {
   await api("/api/logout").catch(() => {});
   sess = null;
+  clearRunState();
   setAuthState(false);
   ["btn-auto", "m-auto"].forEach(id => {
     const ab = $(id);
@@ -130,19 +132,21 @@ const AUTO_Q = new URLSearchParams(location.search);
 const AUTO_MODE = AUTO_Q.has("auto");
 
 function updateAutoBtn() {
-  const ok = !!(sess && sess.anchor && sess.has_receipt);
+  // 排队期间全局锁住按钮，不被这里的解锁判定覆盖
+  if (typeof _lockPrev !== "undefined" && _lockPrev) return;
+  const ok = !!(sess && sess.auto);   // identities[账号].auto：首次成功提交后置位
   ["btn-auto", "m-auto"].forEach(id => {
     const b = $(id);
     b.disabled = !ok;
     b.title = ok ? "一键：拉打卡点 → 拟合 → 提交"
-                 : "需要该账号有保存的锚点且成功提交过一次";
+                 : "需要该账号成功提交过一次";
   });
 }
 
 async function refreshSessionFlags() {
   try {
     const d = await fetch("/api/session").then(r => r.json());
-    if (d.logged_in) { sess.anchor = d.anchor; sess.has_receipt = d.has_receipt; }
+    if (d.logged_in && sess) { sess.anchor = d.anchor; sess.auto = d.auto; }
   } catch (e) { /* 忽略 */ }
   updateAutoBtn();
 }
@@ -178,7 +182,7 @@ async function runAutoFlow(btn) {
       await api("/api/points", { lat: +a.lat, lon: +a.lon });
       setStatus("busy", "自动流程：拟合轨迹…");
       try {
-        await api("/api/fit", autoGoal());
+        await api("/api/fit", { ...autoGoal(), reseed: true });
         break;
       } catch (e) {
         if (!e.message.includes("无可行解") || attempt >= MAX_REFIT) throw e;
@@ -201,7 +205,7 @@ async function runAutoFlow(btn) {
       (r.verified ? " ｜ 已回读" : ""));
     $("runarea-info").innerHTML =
       `<span style="color:var(--green)">自动流程完成：` +
-      `rrid=${r.rrid} uuid=${r.uuid}${r.already ? "（此前已提交过）" : ""}</span>`;
+      `rrid=${r.rrid} uuid=${r.uuid}</span>`;
   } catch (e) {
     flashBtnResult(b, false, "自动跑");
     setStatus("err", "自动流程失败: " + e.message);

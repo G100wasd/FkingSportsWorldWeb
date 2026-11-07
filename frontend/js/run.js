@@ -134,13 +134,8 @@ function renderFit(d, retried) {
   $("fit-detail-json").textContent = JSON.stringify(d, null, 1);
   $("fit-detail").style.display = "";
   $("stats-hint").style.display = "none";
-  if (d.submitted) {
-    $("btn-submit").disabled = true;
-    $("btn-submit").textContent = "✓ 已提交";
-  } else {
-    $("btn-submit").disabled = !d.locs.length;
-    $("btn-submit").textContent = "提交记录";
-  }
+  $("btn-submit").disabled = !d.locs.length;
+  $("btn-submit").textContent = "提交记录";
   $("runarea-info").innerHTML =
     (retried ? `<span style="color:var(--warn)">重新拉点后拟合成功：</span><br>` : "") +
     `直道 ${f.straight.toFixed(0)}m + 半圆 r=${f.radius.toFixed(0)}m | 周长 ${f.perimeter.toFixed(0)}m | 轨迹 ${d.locs.length} 点<br>` +
@@ -183,7 +178,7 @@ async function refetchAndRefit(prevErr, attempt) {
     resetResultCard();
     drawPoints(d);
     try {
-      renderFit(await api("/api/fit", fitGoal()), true);
+      renderFit(await api("/api/fit", { ...fitGoal(), reseed: true }), true);
     } catch (e2) {
       if (e2.message.includes("无可行解") && attempt < MAX_REFIT)
         return await refetchAndRefit(e2.message, attempt + 1);
@@ -199,7 +194,7 @@ async function doFit() {
   $("runarea-info").textContent = "拟合体育场跑道并生成轨迹中…";
   setRunBlock("busy");
   try {
-    renderFit(await api("/api/fit", fitGoal()));
+    renderFit(await api("/api/fit", { ...fitGoal(), reseed: true }));
   } catch (e) {
     console.error(e);
     if (e.message.includes("无可行解")) await refetchAndRefit(e.message, 1);
@@ -210,8 +205,69 @@ async function doFit() {
   }
 }
 
+/* 账号切换时清空本地跑步态：地图叠加层、轨迹缓存、结果卡、
+   排队倒计时——否则新账号会看到上一个账号的点位/轨迹/统计。 */
+function clearRunState() {
+  clearInterval(_queueTicker); clearInterval(_queuePoll);
+  _queueTicker = _queuePoll = null;
+  lockUI(false);
+  $("btn-cancel-submit").style.display = "none";
+  clearOverlays();
+  clearCtrls();
+  trackLocs = []; origLocs = []; lapIdx = []; snapIdx = [];
+  lastFit = null;
+  editing = false;
+  $("btn-edit").textContent = "调整轨迹";
+  $("btn-edit").classList.remove("active");
+  ["ctrl-row", "ctrl-wrow", "ctrl-rrow"]
+    .forEach(id => { const e = $(id); if (e) e.style.display = "none"; });
+  $("btn-fit").disabled = true;
+  $("btn-edit").disabled = true;
+  resetResultCard();
+  $("runarea-info").textContent = "";
+}
+
+/* 改配置后的重算：复用服务端缓存的跑道几何，只按新距离/用时/
+   步幅等重新生成轨迹数据——不重拟合几何、不重拉打卡点，
+   因此也不需要"无可行解"重试链。 */
+async function recalc() {
+  $("cfg-hint").innerHTML +=
+    `<br><span style="color:var(--warn)">配置已更新，重算数据中…</span>`;
+  try {
+    renderFit(await api("/api/fit", fitGoal()));   // 不带 reseed：沿用原随机实现
+  } catch (e) {
+    fitError("按新配置重算失败：" + e.message);
+  } finally {
+    updateCfgHint();   // 整体重写 hint，黄字自然消失
+  }
+}
+
 $("btn-points").onclick = fetchPoints;
 $("btn-fit").onclick = doFit;
+/* 排队期间全局锁：队列里的 job 绑定"这一次拟合"，期间改配置/重新
+   拉点/再拟合都会让即将提交的载荷与界面不一致——直接禁用相关按钮，
+   取消或提交完成后恢复各自原状态。 */
+const LOCK_IDS = ["btn-auto", "m-auto", "btn-points", "btn-fit",
+                  "btn-edit", "btn-cfg-save", "btn-manual"];
+let _lockPrev = null;
+function lockUI(on) {
+  if (on) {
+    if (_lockPrev) return;
+    _lockPrev = {};
+    LOCK_IDS.forEach(id => {
+      const b = $(id); if (!b) return;
+      _lockPrev[id] = b.disabled; b.disabled = true;
+    });
+  } else {
+    if (!_lockPrev) return;
+    const prev = _lockPrev; _lockPrev = null;
+    LOCK_IDS.forEach(id => {
+      const b = $(id); if (b && id in prev) b.disabled = prev[id];
+    });
+    updateAutoBtn();   // 自动跑按钮按最新 auto 位重算（提交后可能刚解锁）
+  }
+}
+
 /* 定时提交队列 UI：按钮显示倒计时，旁挂"取消排队"；
    每 15s 轮询状态直到该 uuid 出队（执行完/被取消）。 */
 let _queueTicker = null, _queuePoll = null;
@@ -219,6 +275,7 @@ function watchQueue(uuid, fireAt) {
   clearInterval(_queueTicker); clearInterval(_queuePoll);
   $("btn-cancel-submit").style.display = "";
   $("btn-submit").disabled = true;
+  lockUI(true);
   const tick = () => {
     const left = Math.max(0, Math.round((fireAt - Date.now()) / 1000));
     $("btn-submit").textContent =
@@ -233,13 +290,14 @@ function watchQueue(uuid, fireAt) {
       clearInterval(_queueTicker); clearInterval(_queuePoll);
       $("btn-cancel-submit").style.display = "none";
       const lr = st.last;
+      await refreshSessionFlags();   // 先刷 auto 位，再解锁按钮
+      lockUI(false);
       if (lr && lr.run_uuid === uuid && lr.ok) {
         $("btn-submit").textContent = "✓ 已自动提交";
         $("runarea-info").innerHTML =
           `<span style="color:var(--green)">定时提交完成：` +
           `rrid=${lr.rrid} uuid=${uuid} ｜OBS ${lr.obs_ok}/2` +
           `${lr.verified ? " ｜已回读" : ""}</span>`;
-        refreshSessionFlags();
       } else {
         $("btn-submit").disabled = false;
         $("btn-submit").textContent = "提交记录";
@@ -255,6 +313,7 @@ $("btn-cancel-submit").onclick = async () => {
   }
   clearInterval(_queueTicker); clearInterval(_queuePoll);
   $("btn-cancel-submit").style.display = "none";
+  lockUI(false);
   $("btn-submit").disabled = false;
   $("btn-submit").textContent = "提交记录";
   $("runarea-info").innerHTML =
@@ -288,10 +347,9 @@ $("btn-submit").onclick = async () => {
       : "";
     const verTxt = r.verified ? "｜服务端已回读" : "";
     $("runarea-info").innerHTML =
-      `<span style="color:var(--green)">` +
-      `${r.already ? "该轨迹此前已提交过：" : "√ 提交成功 "}` +
+      `<span style="color:var(--green)">√ 提交成功 ` +
       `rrid=${r.rrid} uuid=${r.uuid}${obsTxt}${verTxt}</span>`;
-    refreshSessionFlags();   // 回执+锚点落盘后刷新自动跑解锁态
+    refreshSessionFlags();   // auto 位+锚点落盘后刷新自动跑解锁态
   } catch (e) {
     flashBtnResult($("btn-submit"), false, "提交记录");
     $("runarea-info").innerHTML =

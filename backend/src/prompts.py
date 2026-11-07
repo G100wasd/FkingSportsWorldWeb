@@ -1,10 +1,10 @@
-"""命令行账密输入：回车使用 projectConfig.json 中的默认凭据。"""
+"""命令行账密输入：回车使用 sessionConfig.json 中的默认凭据。"""
 
 import getpass
 
-from sportsworld.config import CFG
+from sportsworld.config import load as cfg_load
 
-_acc = CFG.get("account") or {}
+_acc = cfg_load("session").get("account") or {}
 DEFAULT_USERNAME = _acc.get("username", "")
 DEFAULT_PASSWORD = _acc.get("password", "")
 

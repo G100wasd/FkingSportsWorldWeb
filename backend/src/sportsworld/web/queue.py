@@ -1,8 +1,9 @@
-"""定时提交队列：pending_submits 持久化 + 到期调度执行。
+"""定时提交队列：进程内 pending job + 到期调度执行。
 
 时间线自洽模型：服务端日志应看到 points@m -> submit@m+n+延迟。
-job 自包含（body/track/five_point 全序列化），进程重启后原样续跑；
-fire_at = 记录结束 + U(45,95)s，~10% 长尾 +5~30min（真机上传延迟厚尾）。
+job 只在内存中——进程关闭即弃（用户授权语义：点了提交就等到点，
+应用关了就当没发生过）；fire_at = 记录结束 + U(45,95)s，
+~10% 长尾 +5~30min（真机上传延迟厚尾）。
 """
 
 import datetime as dt
@@ -12,7 +13,6 @@ import threading
 import time
 import traceback
 
-from ..config import load as cfg_load, save as cfg_save
 from ..domain import wire
 from ..services import obs, records, submit
 from . import state
@@ -22,14 +22,13 @@ def now_ms() -> int:
     return int(dt.datetime.now().timestamp() * 1000)
 
 
+jobs = {}               # run_uuid -> job（进程内，关进程即弃）
+firing = set()          # 执行中标记
+last_fired = None       # 最近一次执行结果（供 status 展示，易失）
+
+
 def pending() -> dict:
-    return cfg_load().get("pending_submits") or {}
-
-
-def save_pending(jobs: dict):
-    cfg = cfg_load()
-    cfg["pending_submits"] = jobs
-    cfg_save(cfg)
+    return jobs
 
 
 def fire_delay_ms() -> int:
@@ -40,13 +39,8 @@ def fire_delay_ms() -> int:
     return int(d * 1000)
 
 
-firing = set()          # 进程内执行中标记（崩溃后重启会重新评估）
-last_fired = None       # 最近一次执行结果（供 status 展示，易失）
-
-
 def enqueue_submit(fit: dict) -> dict:
-    """把拟合载荷挂入持久化队列，返回 job。"""
-    jobs = pending()
+    """把拟合载荷挂入队列，返回 job。"""
     uuid = fit["run_uuid"]
     if uuid in jobs:
         return jobs[uuid]
@@ -62,14 +56,12 @@ def enqueue_submit(fit: dict) -> dict:
            "end_ms": end_ms, "fire_at": int(fire_at),
            "created_ms": now_ms(), "attempts": 0}
     jobs[uuid] = job
-    save_pending(jobs)
     return job
 
 
 def _fire_job(uuid: str):
-    """执行一个到期 job：会话检查 -> 提交 -> OBS -> 回读 -> 回执 -> 出队。"""
+    """执行一个到期 job：会话检查 -> 提交 -> OBS -> 回读 -> 出队。"""
     global last_fired
-    jobs = pending()
     job = jobs.get(uuid)
     if not job or uuid in firing:
         return
@@ -77,11 +69,6 @@ def _fire_job(uuid: str):
     try:
         if job.get("username") != state.current_user():
             job["state"], job["last_error"] = "waiting_user", "账号不符/未登录"
-            save_pending(jobs)
-            return
-        if state.receipt_for(uuid):            # 崩溃前已提交成功 → 只补出队
-            jobs.pop(uuid, None)
-            save_pending(jobs)
             return
         try:
             sess = state.get_session()
@@ -89,7 +76,6 @@ def _fire_job(uuid: str):
                 sess, job["body"], uuid, job["policy_ts"])
         except submit.SubmitRejected as e:
             job["state"], job["last_error"] = "failed", str(e)
-            save_pending(jobs)
             return
         except Exception as e:                 # 含 SubmitError(结果未知)/网络
             traceback.print_exc()
@@ -100,7 +86,6 @@ def _fire_job(uuid: str):
             else:                              # 退避重试：1min/2min
                 job["state"] = "pending"
                 job["fire_at"] = now_ms() + job["attempts"] * 60_000
-            save_pending(jobs)
             return
         rrid = result["rrid"]
         obs_ok = 0
@@ -114,7 +99,7 @@ def _fire_job(uuid: str):
             obs_ok = obs.upload_both_keys(sess, keys, payload)
         except Exception:
             traceback.print_exc()
-        state.save_receipt(uuid, rrid, obs_ok)
+        state.set_auto(job["username"], True)   # 首次成功提交 → 解锁自动跑
         verified = False
         try:
             time.sleep(2)
@@ -122,7 +107,6 @@ def _fire_job(uuid: str):
         except Exception:
             traceback.print_exc()
         jobs.pop(uuid, None)
-        save_pending(jobs)
         last_fired = {"run_uuid": uuid, "rrid": rrid, "obs_ok": obs_ok,
                       "verified": verified, "ok": True, "ts": now_ms()}
     finally:
@@ -130,12 +114,12 @@ def _fire_job(uuid: str):
 
 
 def _submit_worker():
-    """后台调度：~10s 扫描 pending_submits，到期即执行（晚交合法）。"""
+    """后台调度：~10s 扫描队列，到期即执行（晚交合法）。"""
     while True:
         time.sleep(10)
         try:
             now = now_ms()
-            for uuid, j in pending().items():
+            for uuid, j in list(jobs.items()):
                 if j.get("fire_at", 0) <= now and \
                         j.get("state", "pending") in ("pending", "waiting_user"):
                     _fire_job(uuid)

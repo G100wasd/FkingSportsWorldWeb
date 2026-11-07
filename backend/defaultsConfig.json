@@ -1,20 +1,7 @@
 {
-  "server": {
-    "host": "https://run.gxapp.iydsj.com",
-    "listen_port": 8000
-  },
-  "account": {
-    "username": "",
-    "password": ""
-  },
   "run": {
-    "default_dist": 2200,
-    "default_dur": 720,
-    "default_start": "15:30",
-    "start_jitter_min": [
-      1,
-      5
-    ],
+    "default_dist": 2130.0,
+    "default_dur": 747,
     "start_window": [
       6,
       22
@@ -23,7 +10,7 @@
     "address": ""
   },
   "track": {
-    "speed_floor": 1.9,
+    "speed_floor": 0.55,
     "speed_ceil": 6.3,
     "max_drift": 2.5,
     "lateral_a1": [
@@ -83,15 +70,16 @@
     "drift_gps_speed_kmh": 6.0,
     "gps_zero_p": 0.2,
     "weight_kg": 68.0,
-    "alt_base": 82.0,
-    "alt_sigma": [
-      3.8,
-      6.2
-    ],
+    "alt_cap": 55.5,
+    "alt_spike_p": 0.3,
+    "gps_spike_p": 0.015,
+    "cad_spike_p": 0.035,
     "cadence_range": [
-      100,
-      200
-    ]
+      0,
+      320
+    ],
+    "cad_max": 260.0,
+    "stride_mean": 1.25
   },
   "frontend": {
     "amap_key": "712078f920fec121063036d2c821f49e",
@@ -113,7 +101,5 @@
       "#e53e3e",
       "#d69e2e"
     ]
-  },
-  "anchors": {},
-  "receipts": {}
+  }
 }

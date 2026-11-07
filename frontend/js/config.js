@@ -17,10 +17,12 @@ function halfWidth(s) {
           .replace(/[０-９]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0));
 }
 function cfgDur() {
+  // HH:MM:SS / MM:SS / 纯秒。注意：match 数组长度恒为"组数+1"，
+  // 不能用它区分有无小时位——未命中的组是 undefined（曾导致 NaN，
+  // 用时配置被静默忽略、全程回退默认值）
   const raw = halfWidth(($("cfg-dur").value || "").trim());
-  const m = raw.match(/^(?:(\d+):)?([0-5]?\d):([0-5]\d)$/) || raw.match(/^(\d+):([0-5]?\d)$/);
-  if (m) return m.length === 4 ? (+m[1]) * 3600 + (+m[2]) * 60 + (+m[3])
-                              : (+m[1]) * 60 + (+m[2]);
+  const m = raw.match(/^(?:(\d+):)?(\d{1,3}):([0-5]\d)$/);
+  if (m) return (+(m[1] || 0)) * 3600 + (+m[2]) * 60 + (+m[3]);
   const v = parseFloat(raw);
   return isFinite(v) && v > 0 ? Math.round(v) : null;
 }
@@ -139,14 +141,10 @@ $("btn-cfg-save").onclick = async () => {
     if (r.track?.stride_mean) $("cfg-stride").value = r.track.stride_mean;
     flashBtnResult(btn, true, "保存配置");
     updateCfgHint();
-    // 已有拟合结果 → 用新配置自动重算，让拟合卡同步最新配置
-    // （服务端已同时作废旧提交载荷，不刷新会提交与配置不符的记录）
-    if (lastFit && lastFit.locs && lastFit.locs.length) {
-      $("cfg-hint").innerHTML +=
-        `<br><span style="color:var(--warn)">配置已更新，重新拟合中…</span>`;
-      // 拟合结束刷新 hint 会整体重写，黄字自然消失（失败信息在区域卡显示）
-      doFit().finally(() => updateCfgHint());
-    }
+    // 已有拟合结果 → 按新配置重算记录数据（跑道几何在服务端缓存，
+    // 不重新拟合、不重拉点）；服务端已作废旧提交载荷，必须刷新，
+    // 否则会提交与配置不符的记录
+    if (lastFit && lastFit.locs && lastFit.locs.length) await recalc();
   } catch (e) {
     flashBtnResult(btn, false, "保存配置");
     $("cfg-hint").innerHTML =

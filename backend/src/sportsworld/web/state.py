@@ -1,14 +1,14 @@
-"""Web 层共享状态：登录会话缓存、账号/锚点/回执持久化、拉点/拟合暂存。"""
+"""Web 层共享状态：登录会话缓存、账号/锚点持久化、拉点/拟合暂存。"""
 
-import datetime as dt
 import threading
 
 from fastapi import HTTPException
 
-from ..config import load as cfg_load, save as cfg_save
+from ..config import (account_record, load as cfg_load, save as cfg_save,
+                      update_account_record)
 from ..services.auth import login, stable_identity
 
-# 登录态唯一事实源 = projectConfig.json 的 account；
+# 登录态唯一事实源 = sessionConfig.json 的 account；
 # sess_cache 只是进程内缓存，避免每个请求都重登（GT4 验证+限流）
 lock = threading.Lock()
 sess_cache = {"sess": None, "key": None}
@@ -17,12 +17,25 @@ sess_cache = {"sess": None, "key": None}
 last = {"fences": None,   # 最近一次拉取的围栏数据（复用于拉点）
         "area": None,     # 最近一次拉取的跑步区域（供 /api/fit 复用）
         "anchor": None,   # 最近一次取点的锚点 (lat, lon) = GCJ-02 原值
+        "ring": None,     # 跑道几何拟合缓存 (dense, arcs, center, fit)：
+                          # 只依赖点位/围栏，与跑步配置无关 → 改配置时复用
+        "seed": None,     # 轨迹随机种子：改配置重算时复用，保证 GPS
+                          # 抖动/漂移/摆动那层实现不变（只有配置影响结果）
         "fit": None,      # 最近一次拟合的提交载荷 {body, run_uuid, ...}
         "points_ts": 0}   # 最近一次拉点时刻（ms）：记录起点锚定它
 
 
+def reset_last():
+    """清空拉点/拟合暂存：登录、登出、切号时必须调用——
+    否则新账号会看到并可能提交上一个账号的点位/轨迹。"""
+    last.update({"fences": None, "area": None, "anchor": None,
+                 "ring": None, "seed": None, "fit": None, "points_ts": 0})
+
+
 def account() -> dict:
-    return (cfg_load().get("account") or {})
+    """本机"当前登录者"（session 存储）。CF 上该概念不存在：
+    身份来自每个请求的签名 cookie，而不是服务端全局状态。"""
+    return (cfg_load("session").get("account") or {})
 
 
 def current_user() -> str:
@@ -30,16 +43,12 @@ def current_user() -> str:
 
 
 def save_account(username: str, password: str, device):
-    cfg = cfg_load()
-    cfg["account"] = {"username": username, "password": password,
-                      "device": device or {}}
-    cfg_save(cfg)
+    cfg_save("session", {"account": {
+        "username": username, "password": password, "device": device or {}}})
 
 
 def clear_account():
-    cfg = cfg_load()
-    cfg["account"] = {"username": "", "password": ""}
-    cfg_save(cfg)
+    cfg_save("session", {"account": {"username": "", "password": ""}})
 
 
 def get_session():
@@ -86,33 +95,22 @@ def sess_info(sess):
 
 def anchor_for(username: str):
     """该账号上次拟合使用的锚点（GCJ-02 原值），无记录返回 None。"""
-    return (cfg_load().get("anchors") or {}).get(username)
+    return account_record(username).get("anchor")
 
 
 def save_anchor(username: str, lat: float, lon: float):
     if not username:
         return
-    cfg = cfg_load()
-    cfg.setdefault("anchors", {})[username] = {"lat": lat, "lon": lon}
-    cfg_save(cfg)
+    update_account_record(username, anchor={"lat": lat, "lon": lon})
 
 
-def receipt_for(run_uuid: str):
-    """本地提交回执（WAL）：uuid -> {rrid, ts, username}。防重复提交。"""
-    return (cfg_load().get("receipts") or {}).get(run_uuid)
+def auto_for(username: str) -> bool:
+    """自动跑开关：该账号首次成功提交后置 true（此后按钮解锁）。"""
+    return bool(account_record(username).get("auto"))
 
 
-def has_receipt(username: str) -> bool:
-    """该账号是否有成功提交回执（前端"自动跑"按钮的解锁条件之一）。"""
-    if not username:
-        return False
-    return any(r.get("username") == username
-               for r in (cfg_load().get("receipts") or {}).values())
-
-
-def save_receipt(run_uuid: str, rrid: int, obs_ok: int = 0):
-    cfg = cfg_load()
-    cfg.setdefault("receipts", {})[run_uuid] = {
-        "rrid": rrid, "username": current_user(), "obs_ok": obs_ok,
-        "ts": int(dt.datetime.now().timestamp() * 1000)}
-    cfg_save(cfg)
+def set_auto(username: str, value: bool = True):
+    rec = account_record(username)
+    if not rec or bool(rec.get("auto")) == value:
+        return                      # 无账号记录或已是目标值：不写盘
+    update_account_record(username, auto=value)

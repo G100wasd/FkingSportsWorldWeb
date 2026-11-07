@@ -2,6 +2,7 @@
 
 import datetime as dt
 import json
+import random
 import sys
 import traceback
 from pathlib import Path
@@ -54,10 +55,12 @@ class AnchorBody(BaseModel):
 
 class FitBody(BaseModel):
     """拟合目标：距离（米）+ 用时（秒）+ 伪装起跑时刻（毫秒时间戳）。
-    0/未提供时回退到 projectConfig.json 的 run 段（配置卡"保存"的值）。"""
+    0/未提供时回退到 defaultsConfig.json 的 run 段（配置卡"保存"的值）。"""
     dist: float = 0.0
     dur: int = 0
     start_ms: int = 0
+    reseed: bool = False   # True=重掷随机实现（手动"拟合轨迹"/自动跑）；
+                           # False=沿用上次种子（改配置后的重算）
 
 
 class RunConfigBody(BaseModel):
@@ -105,8 +108,8 @@ def api_defaults():
 
 @app.post("/api/config")
 def api_config(body: RunConfigBody):
-    """持久化跑步配置到 projectConfig.json 的 run/track 段。"""
-    cfg = cfg_load()
+    """持久化跑步配置到 defaultsConfig.json 的 run/track 段。"""
+    cfg = cfg_load("defaults")
     run = cfg.setdefault("run", {})
     for k in ("default_dist", "default_dur", "start_window"):
         v = getattr(body, k, None)
@@ -118,7 +121,7 @@ def api_config(body: RunConfigBody):
             cfg.setdefault("track", {})[k] = v
             # CFG["track"] 与 trackgen._T 是同一字典对象：原地更新即运行期生效
             (CFG.setdefault("track", {}))[k] = v
-    cfg_save(cfg)
+    cfg_save("defaults", cfg)
     _RUN.update(run)   # FitBody 默认值在类定义时已绑定；同步字典让后续读取生效
     state.last["fit"] = None   # 配置已变：旧拟合的提交载荷作废
     return {"run": _RUN, "track": _track_cfg()}
@@ -135,7 +138,7 @@ def api_session():
     uname = state.current_user() if sess else ""
     info = state.sess_info(sess)
     info["anchor"] = state.anchor_for(uname) if sess else None
-    info["has_receipt"] = state.has_receipt(uname) if sess else False
+    info["auto"] = state.auto_for(uname) if sess else False
     if err:
         info["login_error"] = err
     return info
@@ -149,6 +152,7 @@ def api_login(body: LoginBody):
                      identity=stable_identity(u, body.device))
     except Exception as e:
         raise HTTPException(502, f"登录失败: {e}")
+    state.reset_last()   # 换号/重登：上一个账号的点位与拟合一律作废
     state.save_account(u, body.password, body.device)
     with state.lock:
         key = (u, body.password)
@@ -158,13 +162,13 @@ def api_login(body: LoginBody):
         old.logout()  # 顶号前登出旧会话
     info = state.sess_info(sess)
     info["anchor"] = state.anchor_for(u)
-    info["has_receipt"] = state.has_receipt(u)
+    info["auto"] = state.auto_for(u)
     return info
 
 
 @app.post("/api/logout")
 def api_logout():
-    state.last["fit"] = None
+    state.reset_last()
     state.close_session()
     state.clear_account()
     return state.sess_info(None)
@@ -176,6 +180,8 @@ def api_points(body: AnchorBody):
     sess = state.get_session()
     state.last["anchor"] = (body.lat, body.lon)
     state.last["fit"] = None          # 新点位使旧拟合作废，防止误提交过期数据
+    state.last["ring"] = None         # 点位变了，跑道几何缓存同时作废
+    state.last["seed"] = None         # 新点位 = 新一次跑，重掷随机实现
     if state.last["fences"] is None:
         try:
             state.last["fences"] = runarea.fetch_fences(sess)
@@ -225,10 +231,19 @@ def api_fit(body: FitBody):
         state.last["points_ts"] if state.last["points_ts"]
         else now_ms - (dur + 60) * 1000)
     try:
-        dense, arcs, center, fit = stadium.make_stadium_ring(
-            area["points_bd"], area["ref_center"], area["stadium_ring"])
+        # 跑道几何只由点位+围栏决定：首次拟合后缓存，改配置后的重算
+        # 直接复用同一条跑道（省掉 scipy 多初值搜索，也不会再冒出
+        # "无可行解"——那是几何阶段的失败，与距离/用时无关）
+        if state.last["ring"] is None:
+            state.last["ring"] = stadium.make_stadium_ring(
+                area["points_bd"], area["ref_center"], area["stadium_ring"])
+        dense, arcs, center, fit = state.last["ring"]
+        # 种子固定 → 改配置重算时轨迹形状不跳变（抖动/漂移同一实现），
+        # 只有配置本身引起的差异；手动拟合/自动跑才重掷
+        if body.reseed or state.last["seed"] is None:
+            state.last["seed"] = random.randrange(1 << 62)
         trk = track.build_track(
-            dist, dur, None, area["points_bd"],
+            dist, dur, state.last["seed"], area["points_bd"],
             fence_ring=area["stadium_ring"], ring=(dense, arcs, center),
             start_ms=start_ms)
         locs = trk["locations"]
@@ -310,7 +325,6 @@ def api_fit(body: FitBody):
             "fence_margin": fit["fence_margin"], "converged": fit["converged"],
             "alt_solutions": fit["alt_solutions"],
         },
-        "submitted": bool(state.receipt_for(run_uuid)),
     }
 
 
@@ -323,10 +337,6 @@ def api_submit():
     if state.last["fit"]["username"] != state.current_user():
         raise HTTPException(409, "拟合数据属于其他账号，请重新拟合")
     run_uuid = state.last["fit"]["run_uuid"]
-    old = state.receipt_for(run_uuid)
-    if old:
-        return {"rrid": old["rrid"], "uuid": run_uuid, "already": True,
-                "obs_ok": old.get("obs_ok", 0), "obs_total": 2}
     job = submitq.enqueue_submit(state.last["fit"])
     eta = max(0, (job["fire_at"] - submitq.now_ms()) // 1000)
     return {"scheduled": True, "uuid": run_uuid, "fire_at": job["fire_at"],
@@ -366,7 +376,6 @@ def api_submit_cancel(body: CancelBody):
     if uuid in submitq.firing:
         raise HTTPException(409, "任务正在执行中，无法取消")
     jobs.pop(uuid)
-    submitq.save_pending(jobs)
     return {"cancelled": uuid}
 
 

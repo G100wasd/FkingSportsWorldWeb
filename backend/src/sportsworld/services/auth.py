@@ -88,17 +88,15 @@ def stable_identity(username: str, device: dict | None = None) -> dict:
     画像里最刺眼的非真人指纹。platform/device_name/os_version
     同样首登即固化（真实手机不会换型号）。
     """
-    from ..config import load as _cfg_load, save as _cfg_save
-    cfg = _cfg_load()
-    ids = cfg.setdefault("identities", {})
-    rec = dict(ids.get(username) or {})
-    if not rec:
+    from ..config import account_record, update_account_record
+    iden = account_record(username).get("identity") or {}
+    if not iden:
         base = default_identity(device)
         now_ms = int(time.time() * 1000)
         platform = base["platform"]
         # 安装时间：android 30-180 天前，iOS 2-10 天前（对齐 Rust 语义）
         days = (30.0, 180.0) if platform == "android" else (2.0, 10.0)
-        rec = {
+        iden = {
             "platform": platform,
             "device_name": base["device_name"],
             "os_version": base["os_version"],
@@ -109,9 +107,9 @@ def stable_identity(username: str, device: dict | None = None) -> dict:
                  * uuid.uuid4().int / (1 << 128)) * 86_400_000),
             "idfa": "",
         }
-        ids[username] = rec
-        _cfg_save(cfg)
-    return dict(rec)
+        # auto=False：自动跑开关，该账号首次成功提交后置 true
+        update_account_record(username, identity=iden, auto=False)
+    return dict(iden)
 
 
 def gee_check(client: httpx.Client, session: EnvelopeSession, identity: dict, username: str) -> bool:
