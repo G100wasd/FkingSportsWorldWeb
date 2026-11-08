@@ -42,9 +42,26 @@ def current_user() -> str:
     return account().get("username") or ""
 
 
+DEVICE_KEYS = ("platform", "device_name", "os_version")
+
+
+def clean_device(device) -> dict:
+    """设备环境字段白名单：只取三个已知键并截断长度。
+    前端探测结果是不可信输入，原样落盘等于让客户端写任意 JSON。"""
+    if not isinstance(device, dict):
+        return {}
+    out = {}
+    for k in DEVICE_KEYS:
+        v = device.get(k)
+        if isinstance(v, str) and v.strip():
+            out[k] = v.strip()[:64]
+    return out
+
+
 def save_account(username: str, password: str, device):
     cfg_save("session", {"account": {
-        "username": username, "password": password, "device": device or {}}})
+        "username": username, "password": password,
+        "device": clean_device(device)}})
 
 
 def clear_account():
@@ -99,7 +116,13 @@ def anchor_for(username: str):
 
 
 def save_anchor(username: str, lat: float, lon: float):
+    """锚点只在真的变了（地图重新选点/定位）时落盘：
+    run_fit 每次都会调用这里，无条件写会让每次拟合都整文件重写。"""
     if not username:
+        return
+    old = account_record(username).get("anchor") or {}
+    if (abs(float(old.get("lat", 1e9)) - lat) < 1e-9 and
+            abs(float(old.get("lon", 1e9)) - lon) < 1e-9):
         return
     update_account_record(username, anchor={"lat": lat, "lon": lon})
 

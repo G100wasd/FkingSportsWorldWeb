@@ -89,6 +89,8 @@ def stable_identity(username: str, device: dict | None = None) -> dict:
     同样首登即固化（真实手机不会换型号）。
     """
     from ..config import account_record, update_account_record
+    if not username:
+        return default_identity(device)   # 无账号可归属：不落盘
     iden = account_record(username).get("identity") or {}
     if not iden:
         base = default_identity(device)

@@ -72,11 +72,42 @@ function resetResultCard() {
     `<div class="hint">NO DATA — 先获取打卡点并拟合。</div>`;
   $("fit-detail").style.display = "none";
   $("stats-hint").style.display = "";
-  $("btn-submit").disabled = true;
-  $("btn-submit").textContent = "提交记录";
   const w = $("submit-warn");
   if (w) w.textContent = "";
+  updateSubmitMode();
 }
+
+function clearDeferHint() {
+  const e = $("submit-defer-hint");
+  if (e) e.textContent = "";
+}
+
+/* 提交按钮的两种形态：
+   - 伪装起跑在未来 → "延迟提交"：不需要先拟合，后台到点自己
+     拉点→拟合→跑完→提交（服务端日志与真人同构）
+   - 否则 → "提交记录"：要求已有拟合结果
+   配置卡改日期/时间会触发重算，这里每次渲染和每 10s 复评一次。 */
+function deferStartMs() {
+  const ms = (typeof resolveStartMs === "function") ? resolveStartMs() : 0;
+  return (ms && ms > Date.now() + 30000) ? ms : 0;
+}
+
+function updateSubmitMode() {
+  if (_lockPrev) return;              // 排队锁定期间不改按钮
+  const b = $("btn-submit");
+  const defer = deferStartMs();
+  const hasFit = !!(lastFit && lastFit.locs && lastFit.locs.length);
+  if (defer && !hasFit) {
+    b.textContent = "延迟提交";
+    b.disabled = !sess || !readInputs();
+    b.title = "到伪装起跑时刻后自动：拉点 → 拟合 → 跑完 → 提交";
+  } else {
+    b.textContent = defer ? "延迟提交" : "提交记录";
+    b.disabled = !hasFit && !defer;
+    b.title = "";
+  }
+}
+setInterval(() => { if (!_lockPrev) updateSubmitMode(); }, 10000);
 
 /* 提交时间戳警告：记录结束早于当前 >10min 时提交，服务端日志里
    "结束时刻"与"上传时刻"间隔过大，与真机跑完即传的行为不符，
@@ -134,8 +165,7 @@ function renderFit(d, retried) {
   $("fit-detail-json").textContent = JSON.stringify(d, null, 1);
   $("fit-detail").style.display = "";
   $("stats-hint").style.display = "none";
-  $("btn-submit").disabled = !d.locs.length;
-  $("btn-submit").textContent = "提交记录";
+  updateSubmitMode();
   $("runarea-info").innerHTML =
     (retried ? `<span style="color:var(--warn)">重新拉点后拟合成功：</span><br>` : "") +
     `直道 ${f.straight.toFixed(0)}m + 半圆 r=${f.radius.toFixed(0)}m | 周长 ${f.perimeter.toFixed(0)}m | 轨迹 ${d.locs.length} 点<br>` +
@@ -271,22 +301,47 @@ function lockUI(on) {
 /* 定时提交队列 UI：按钮显示倒计时，旁挂"取消排队"；
    每 15s 轮询状态直到该 uuid 出队（执行完/被取消）。 */
 let _queueTicker = null, _queuePoll = null;
-function watchQueue(uuid, fireAt) {
+function watchQueue(uuid, fireAt, deferred) {
   clearInterval(_queueTicker); clearInterval(_queuePoll);
   $("btn-cancel-submit").style.display = "";
   $("btn-submit").disabled = true;
   lockUI(true);
+  // deferred 阶段倒计时到"开跑"，之后接力到真正的提交 job
+  let label = deferred ? "开跑" : "自动提交", stage = "";
   const tick = () => {
     const left = Math.max(0, Math.round((fireAt - Date.now()) / 1000));
-    $("btn-submit").textContent =
-      left > 0 ? `自动提交 ${fmtDur(left)}` : "提交中…";
+    $("btn-submit").textContent = stage ? stage
+      : left > 0 ? `${label} ${fmtDur(left)}`
+      : (deferred ? "开跑中…" : "提交中…");
   };
   tick();
   _queueTicker = setInterval(tick, 1000);
   _queuePoll = setInterval(async () => {
     try {
       const st = await fetch("/api/submit/status").then(r => r.json());
-      if ((st.pending || []).some(j => j.run_uuid === uuid)) return;
+      const mine = (st.pending || []).find(j => j.run_uuid === uuid);
+      if (mine) {
+        // 到点执行中：按钮显示 拉取打卡点/拟合轨迹 等阶段
+        stage = (mine.state === "failed") ? "" : (mine.stage || "");
+        if (mine.state === "failed") {
+          clearInterval(_queueTicker); clearInterval(_queuePoll);
+          $("btn-cancel-submit").style.display = "";
+          lockUI(false);
+          $("btn-submit").disabled = false;
+          updateSubmitMode();
+          fitError(`定时任务失败：${esc(mine.error || "未知错误")}`);
+        }
+        return;
+      }
+      // 本 job 已出队：延迟任务会接力成一个真正的提交 job
+      const next = (st.pending || []).find(j => j.from_deferred === uuid);
+      if (next) {
+        $("runarea-info").innerHTML =
+          `<span style="color:var(--warn)">已开跑并完成拟合，` +
+          `将于跑完后自动提交</span>`;
+        watchQueue(next.run_uuid, next.fire_at, false);
+        return;
+      }
       clearInterval(_queueTicker); clearInterval(_queuePoll);
       $("btn-cancel-submit").style.display = "none";
       const lr = st.last;
@@ -300,10 +355,10 @@ function watchQueue(uuid, fireAt) {
           `${lr.verified ? " ｜已回读" : ""}</span>`;
       } else {
         $("btn-submit").disabled = false;
-        $("btn-submit").textContent = "提交记录";
+        updateSubmitMode();
       }
     } catch (_) {}
-  }, 15000);
+  }, 5000);
 }
 $("btn-cancel-submit").onclick = async () => {
   try { await api("/api/submit/cancel", {}); } catch (e) {
@@ -315,18 +370,41 @@ $("btn-cancel-submit").onclick = async () => {
   $("btn-cancel-submit").style.display = "none";
   lockUI(false);
   $("btn-submit").disabled = false;
-  $("btn-submit").textContent = "提交记录";
+  updateSubmitMode();
   $("runarea-info").innerHTML =
     `<span style="color:var(--warn)">已取消排队提交</span>`;
 };
 
+/* 延迟提交：伪装起跑在未来且还没拟合 —— 把锚点+目标+起跑时刻
+   交给后台，到点自己走 拉点→拟合→跑完→提交。 */
+async function submitDeferred(startMs) {
+  const c = readInputs();
+  if (!c) { fitError("经纬度无效"); return; }
+  const g = fitGoal();
+  const r = await api("/api/submit/deferred",
+                      { lat: c[0], lon: c[1], dist: g.dist, dur: g.dur,
+                        start_ms: startMs });
+  const t = new Date(r.fire_at);
+  const p = n => String(n).padStart(2, "0");
+  clearDeferHint();
+  flashBtnResult($("btn-submit"), true, "延迟提交", "已排队");
+  $("runarea-info").innerHTML =
+    `<span style="color:var(--warn)">已排入延迟提交：` +
+    `${p(t.getHours())}:${p(t.getMinutes())}:${p(t.getSeconds())} 自动开跑` +
+    `（拉点 → 拟合 → ${fmtDur(g.dur)} 后提交）</span>`;
+  watchQueue(r.uuid, r.fire_at, true);
+}
+
 $("btn-submit").onclick = async () => {
-  if (!lastFit || !lastFit.locs || !lastFit.locs.length) return;
+  const defer = deferStartMs();
+  const hasFit = !!(lastFit && lastFit.locs && lastFit.locs.length);
+  if (!hasFit && !defer) return;
   updateSubmitWarn();   // 点击时再复查一次，跨过阈值立即显示
   $("btn-submit").disabled = true;
   $("btn-submit").textContent = "排队中…";
   setRunBlock("busy");
   try {
+    if (defer && !hasFit) { await submitDeferred(defer); return; }
     const r = await api("/api/submit", {});
     if (r.scheduled) {
       const t = new Date(r.fire_at);
@@ -351,7 +429,9 @@ $("btn-submit").onclick = async () => {
       `rrid=${r.rrid} uuid=${r.uuid}${obsTxt}${verTxt}</span>`;
     refreshSessionFlags();   // auto 位+锚点落盘后刷新自动跑解锁态
   } catch (e) {
-    flashBtnResult($("btn-submit"), false, "提交记录");
+    flashBtnResult($("btn-submit"), false,
+                   defer && !hasFit ? "延迟提交" : "提交记录");
+    $("btn-submit").disabled = false;
     $("runarea-info").innerHTML =
       `<span style="color:var(--red)">提交失败：${esc(e.message)}</span>`;
   } finally {

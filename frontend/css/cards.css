@@ -111,6 +111,12 @@
   content: "//"; color: var(--accent); font-family: var(--mono);
   margin-right: 6px; opacity: .7;
 }
+/* 字段级校验提示：紧贴对应输入框下方，无内容时不占位 */
+.field-hint {
+  margin: -4px 0 8px 78px; color: var(--warn);
+}
+.field-hint:empty { display: none; }
+.field-hint::before { content: "⚠"; margin-right: 5px; color: var(--warn); }
 
 /* 拟合结果 kv */
 .kv-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 5px; }

@@ -12,12 +12,19 @@ CFG = server+defaults 的合并视图，进程启动时一次加载（trackgen �
 session/accounts 是运行态：必须每次 load() 现读、改完立即 save()。
 """
 
+import datetime as dt
 import json
+import os
 import shutil
 import sys
+import threading
 from pathlib import Path
 
 STORES = ("server", "defaults", "session", "accounts")
+
+# 所有 load/save 串行化：HTTP 线程池 + 队列 worker 会真并发，
+# 读-改-写（update_account_record）若交错会静默丢字段
+_io_lock = threading.RLock()
 
 
 def _dir() -> Path:
@@ -40,15 +47,50 @@ def _path(name: str) -> Path:
 
 
 def load(name: str) -> dict:
-    try:
-        return json.loads(_path(name).read_text(encoding="utf-8"))
-    except Exception:
-        return {}
+    """读配置。文件不存在 → {}；**内容损坏 → 先备份再返回 {}**。
+
+    损坏必须留痕：静默当成空配置，紧接着的一次 save 就会把残骸
+    覆盖掉——设备指纹全丢、下次登录生成新 device_id，正是风控
+    最敏感的信号。备份文件名带时间戳，可人工取回。
+    """
+    with _io_lock:
+        p = _path(name)
+        try:
+            raw = p.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            return {}
+        except Exception as e:
+            print(f"[config] 读取 {p.name} 失败: {e}")
+            return {}
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError as e:
+            stamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
+            bak = p.with_name(f"{p.stem}.corrupt-{stamp}.json")
+            try:
+                shutil.copy2(p, bak)
+            except Exception:
+                pass
+            print(f"[config] !! {p.name} 内容损坏({e})，已备份为 {bak.name}；"
+                  f"本次按空配置处理，请人工核对后恢复")
+            return {}
 
 
 def save(name: str, data: dict) -> None:
-    _path(name).write_text(
-        json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    """原子落盘：先写临时文件再同盘 rename。
+
+    直接 write_text 是"先截断后写入"，进程在这期间被杀（关窗/崩溃）
+    就会留下半截 JSON。
+    """
+    with _io_lock:
+        p = _path(name)
+        tmp = p.with_name(p.name + ".tmp")
+        text = json.dumps(data, ensure_ascii=False, indent=2)
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write(text)
+            f.flush()
+            os.fsync(f.fileno())   # 断电/强杀也不会只落一半
+        tmp.replace(p)             # 同盘 rename：原子替换
 
 
 CFG = {**load("server"), **load("defaults")}
@@ -64,9 +106,11 @@ def account_record(username: str) -> dict:
 
 
 def update_account_record(username: str, **fields) -> dict:
-    """字段级更新并落盘；未给的字段保持原值。"""
-    data = load("accounts")
-    rec = data.setdefault("accounts", {}).setdefault(username, {})
-    rec.update(fields)
-    save("accounts", data)
-    return rec
+    """字段级更新并落盘；未给的字段保持原值。
+    整个读-改-写持锁，避免并发线程互相覆盖。"""
+    with _io_lock:
+        data = load("accounts")
+        rec = data.setdefault("accounts", {}).setdefault(username, {})
+        rec.update(fields)
+        save("accounts", data)
+        return rec

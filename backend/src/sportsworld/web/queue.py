@@ -13,9 +13,11 @@ import threading
 import time
 import traceback
 
+from uuid import uuid4
+
 from ..domain import wire
 from ..services import obs, records, submit
-from . import state
+from . import pipeline, state
 
 
 def now_ms() -> int:
@@ -50,7 +52,8 @@ def enqueue_submit(fit: dict) -> dict:
               if trk.get("locations") else 0)
     fire_at = end_ms + fire_delay_ms()
     fire_at = max(fire_at, now_ms() + random.uniform(45, 95) * 1000)
-    job = {"run_uuid": uuid, "username": fit["username"],
+    job = {"run_uuid": uuid, "kind": "submit", "stage": "待提交",
+           "username": fit["username"],
            "body": fit["body"], "policy_ts": fit["policy_ts"],
            "track": trk, "five_point": fit["five_point"],
            "end_ms": end_ms, "fire_at": int(fire_at),
@@ -59,8 +62,41 @@ def enqueue_submit(fit: dict) -> dict:
     return job
 
 
+def enqueue_deferred(username: str, lat: float, lon: float,
+                     dist: float, dur: int, start_ms: int) -> dict:
+    """延迟提交：伪装起跑时刻在未来时，先排队等到那一刻，再由后台
+    走 拉点 -> 拟合 -> 等跑完 -> 提交。服务端日志因此看到的是
+    points@起跑时刻 → submit@起跑+时长+延迟，与真人完全同构。"""
+    jid = "defer-" + str(uuid4()).upper()
+    job = {"run_uuid": jid, "kind": "deferred", "stage": "待开跑",
+           "username": username, "anchor": {"lat": lat, "lon": lon},
+           "dist": dist, "dur": dur, "start_ms": int(start_ms),
+           "fire_at": int(start_ms), "created_ms": now_ms(), "attempts": 0}
+    jobs[jid] = job
+    return job
+
+
+def _fire_deferred(job: dict):
+    """到达伪装起跑时刻：拉点 -> 拟合 -> 转成普通提交 job 继续排队。"""
+    jid = job["run_uuid"]
+    sess = state.get_session()
+    job["stage"] = "拉取打卡点"
+    pipeline.fetch_points(sess, job["anchor"]["lat"], job["anchor"]["lon"])
+    job["stage"] = "拟合轨迹"
+    # start_ms 不传：拟合内部锚定刚才那次真实拉点时刻
+    pipeline.run_fit(sess, job["dist"], job["dur"], 0, True)
+    fit = state.last["fit"]
+    if not fit:
+        raise RuntimeError("拟合未产出提交载荷")
+    jobs.pop(jid, None)                  # 占位 job 退场，换成真正的提交 job
+    nxt = enqueue_submit(fit)
+    nxt["from_deferred"] = jid
+    return nxt
+
+
 def _fire_job(uuid: str):
-    """执行一个到期 job：会话检查 -> 提交 -> OBS -> 回读 -> 出队。"""
+    """执行一个到期 job：会话检查 -> 提交 -> OBS -> 回读 -> 出队。
+    deferred 类型则先走 拉点+拟合，再转为提交 job 继续等。"""
     global last_fired
     job = jobs.get(uuid)
     if not job or uuid in firing:
@@ -69,6 +105,20 @@ def _fire_job(uuid: str):
     try:
         if job.get("username") != state.current_user():
             job["state"], job["last_error"] = "waiting_user", "账号不符/未登录"
+            return
+        if job.get("kind") == "deferred":
+            try:
+                _fire_deferred(job)
+            except Exception as e:       # 拉点限流/拟合无可行解/网络
+                traceback.print_exc()
+                job["attempts"] = job.get("attempts", 0) + 1
+                job["last_error"] = getattr(e, "detail", None) or str(e)
+                job["stage"] = "开跑失败"
+                if job["attempts"] >= 3:
+                    job["state"] = "failed"
+                else:                    # 退避重试：1min/2min（点位接口限流）
+                    job["state"] = "pending"
+                    job["fire_at"] = now_ms() + job["attempts"] * 60_000
             return
         try:
             sess = state.get_session()

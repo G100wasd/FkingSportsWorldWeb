@@ -38,16 +38,16 @@
         <circle cx="8" cy="6.2" r="1.5" fill="currentColor" stroke="none"/>
       </svg>
     </div>
-    <div class="rail-ico" title="跑步区域" data-card="c-area">
-      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.1">
-        <path d="M4 1.8v12.4"/>
-        <path d="M4 3h8.2l-2 2.7 2 2.7H4"/>
-      </svg>
-    </div>
     <div class="rail-ico" title="跑步配置" data-card="c-config">
       <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.1">
         <circle cx="8" cy="8" r="4.4" stroke-dasharray="2.1 1.9"/>
         <circle cx="8" cy="8" r="1.9"/>
+      </svg>
+    </div>
+    <div class="rail-ico" title="跑步区域" data-card="c-area">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.1">
+        <path d="M4 1.8v12.4"/>
+        <path d="M4 3h8.2l-2 2.7 2 2.7H4"/>
       </svg>
     </div>
     <div class="rail-ico" title="本次拟合" data-card="c-result">
@@ -102,9 +102,37 @@
       </div>
     </div>
 
+    <div class="card" id="c-config">
+      <div class="card-head">
+        <span class="idx">02/</span><span class="cn">跑步配置</span>
+        <span class="en">Run&nbsp;Config</span>
+      </div>
+      <div class="card-body"><div class="body-inner">
+        <div class="row"><label>日期</label><input id="cfg-date" type="date"></div>
+        <div class="row"><label>拉取时间</label><input id="cfg-start" placeholder="留空=拉点时的本地时间"></div>
+        <div class="hint field-hint" id="cfg-start-hint"></div>
+        <div class="row"><label>距离 m</label><input id="cfg-dist" value="2200"></div>
+        <div class="hint field-hint" id="cfg-dist-hint"></div>
+        <div class="row"><label>均速 m/s</label><input id="cfg-speed" placeholder="AUTO"></div>
+        <div class="row"><label>用时 mm:ss</label><input id="cfg-dur" placeholder="AUTO"></div>
+        <div class="row"><label>最大海拔 m</label><input id="cfg-alt" placeholder="55.5"></div>
+        <div class="row"><label>步频 spm</label><input id="cfg-cad" placeholder="165"></div>
+        <div class="row"><label>步幅 m</label><input id="cfg-stride" placeholder="1.20"></div>
+        <div class="row"><label>最大步频</label><input id="cfg-cadmax" placeholder="260"></div>
+        <div class="btn-row" style="margin-top:9px">
+          <button class="btn" id="btn-cfg-save">保存配置</button>
+        </div>
+        <div class="hint" id="cfg-hint"></div>
+      </div></div>
+      <div class="card-foot">
+        <button class="btn" data-nav="-1">上一页</button>
+        <button class="btn" data-nav="1">下一页</button>
+      </div>
+    </div>
+
     <div class="card" id="c-area">
       <div class="card-head">
-        <span class="idx">02/</span><span class="cn">跑步区域</span>
+        <span class="idx">03/</span><span class="cn">跑步区域</span>
         <span class="en">Run&nbsp;Area</span>
       </div>
       <div class="card-body"><div class="body-inner">
@@ -136,32 +164,6 @@
       </div>
     </div>
 
-    <div class="card" id="c-config">
-      <div class="card-head">
-        <span class="idx">03/</span><span class="cn">跑步配置</span>
-        <span class="en">Run&nbsp;Config</span>
-      </div>
-      <div class="card-body"><div class="body-inner">
-        <div class="row"><label>日期</label><input id="cfg-date" type="date"></div>
-        <div class="row"><label>伪装时间</label><input id="cfg-start" placeholder="留空=本地当前时间"></div>
-        <div class="row"><label>距离 m</label><input id="cfg-dist" value="2200"></div>
-        <div class="row"><label>均速 m/s</label><input id="cfg-speed" placeholder="AUTO"></div>
-        <div class="row"><label>用时 mm:ss</label><input id="cfg-dur" placeholder="AUTO"></div>
-        <div class="row"><label>最大海拔 m</label><input id="cfg-alt" placeholder="55.5"></div>
-        <div class="row"><label>步频 spm</label><input id="cfg-cad" placeholder="165"></div>
-        <div class="row"><label>步幅 m</label><input id="cfg-stride" placeholder="1.20"></div>
-        <div class="row"><label>最大步频</label><input id="cfg-cadmax" placeholder="260"></div>
-        <div class="btn-row" style="margin-top:9px">
-          <button class="btn" id="btn-cfg-save">保存配置</button>
-        </div>
-        <div class="hint" id="cfg-hint"></div>
-      </div></div>
-      <div class="card-foot">
-        <button class="btn" data-nav="-1">上一页</button>
-        <button class="btn" data-nav="1">下一页</button>
-      </div>
-    </div>
-
     <div class="card" id="c-result">
       <div class="card-head">
         <span class="idx">04/</span><span class="cn">本次拟合</span>
@@ -170,6 +172,7 @@
       <div class="card-body"><div class="body-inner">
         <div id="fit-summary"><div class="hint">NO DATA — 先获取打卡点并拟合。</div></div>
         <div class="hint" id="submit-warn" style="color:var(--warn)"></div>
+        <div class="hint" id="submit-defer-hint" style="color:var(--warn)"></div>
         <div class="btn-row" style="margin-top:9px">
           <button class="btn primary" id="btn-submit" disabled>提交记录</button>
           <button class="btn" id="btn-cancel-submit" style="display:none">取消排队</button>
