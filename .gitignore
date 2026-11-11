@@ -9,7 +9,9 @@ backend/src/dist/
 # 分享包产物
 release/
 
-# 运行态配置（含凭据/设备指纹，仅本机有效，不入库）
+# 运行态配置（全部为运行期产物，由对应 *.example.json 模板兜底，不入库）
+backend/serverConfig.json
+backend/defaultsConfig.json
 backend/sessionConfig.json
 backend/accountsConfig.json
 

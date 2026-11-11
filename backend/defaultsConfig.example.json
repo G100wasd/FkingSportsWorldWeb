@@ -2,10 +2,7 @@
   "run": {
     "default_dist": 2130.0,
     "default_dur": 747,
-    "start_window": [
-      6,
-      22
-    ],
+    "start_window": [6, 22],
     "face_check": 0,
     "address": ""
   },
@@ -13,45 +10,18 @@
     "speed_floor": 0.55,
     "speed_ceil": 6.3,
     "max_drift": 2.5,
-    "lateral_a1": [
-      0.35,
-      0.8
-    ],
-    "lateral_a2": [
-      0.1,
-      0.3
-    ],
+    "lateral_a1": [0.35, 0.8],
+    "lateral_a2": [0.1, 0.3],
     "ar1_sigma": 0.35,
     "warmup_s": 22,
     "cooldown_s": 16,
     "dt_main_p": 0.8,
     "dt_main": 5.0,
-    "dt_others": [
-      1,
-      2,
-      3,
-      4,
-      6,
-      7,
-      8
-    ],
-    "ptype_cum": [
-      0.39,
-      0.93,
-      0.96
-    ],
-    "radius_typ3": [
-      1.4,
-      3.0
-    ],
-    "radius_normal": [
-      1.2,
-      2.0
-    ],
-    "radius_drift": [
-      1.6,
-      5.0
-    ],
+    "dt_others": [1, 2, 3, 4, 6, 7, 8],
+    "ptype_cum": [0.39, 0.93, 0.96],
+    "radius_typ3": [1.4, 3.0],
+    "radius_normal": [1.2, 2.0],
+    "radius_drift": [1.6, 5.0],
     "snap_tolerance_m": 40,
     "snap_post_weight": 0.5,
     "snap_post_sigma_m": 12.0,
@@ -59,14 +29,8 @@
     "corner_min_deg": 100.0,
     "corner_blend": 0.65,
     "corner_iters": 8,
-    "inward_a": [
-      0.4,
-      1.2
-    ],
-    "inward_period_s": [
-      80.0,
-      160.0
-    ],
+    "inward_a": [0.4, 1.2],
+    "inward_period_s": [80.0, 160.0],
     "drift_gps_speed_kmh": 6.0,
     "gps_zero_p": 0.2,
     "weight_kg": 68.0,
@@ -74,10 +38,7 @@
     "alt_spike_p": 0.3,
     "gps_spike_p": 0.015,
     "cad_spike_p": 0.035,
-    "cadence_range": [
-      0,
-      320
-    ],
+    "cadence_range": [0, 320],
     "cad_max": 260.0,
     "stride_mean": 1.25
   },
@@ -85,21 +46,9 @@
     "amap_key": "712078f920fec121063036d2c821f49e",
     "amap_security": "4318a9597a171c70a60fce718d67d959",
     "max_refit": 3,
-    "ctrl": {
-      "total": 8,
-      "max": 10,
-      "weight": 0.8,
-      "radius": 12
-    },
+    "ctrl": {"total": 8, "max": 10, "weight": 0.8, "radius": 12},
     "taper_points": 14,
     "sample_rows": 40,
-    "lap_colors": [
-      "#38b2ac",
-      "#3182ce",
-      "#805ad5",
-      "#dd6b20",
-      "#e53e3e",
-      "#d69e2e"
-    ]
+    "lap_colors": ["#38b2ac", "#3182ce", "#805ad5", "#dd6b20", "#e53e3e", "#d69e2e"]
   }
 }

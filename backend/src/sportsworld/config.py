@@ -1,5 +1,9 @@
 """配置按生命周期拆成四份 JSON，各自独立加载/保存。
 
+真实配置文件（serverConfig/defaultsConfig/sessionConfig/accountsConfig.json）
+是运行态产物，不入库；每份对应一个入库模板 {name}Config.example.json，
+真实文件缺失或损坏时 load() 回退到模板，save() 才把真实文件写出。
+
 | 文件 | 内容 | 生命周期 | CF 部署形态 |
 |---|---|---|---|
 | serverConfig.json   | server          | 部署常量，只读     | Worker 环境变量 / Secrets |
@@ -35,19 +39,24 @@ def _dir() -> Path:
 
 
 def _path(name: str) -> Path:
-    p = _dir() / f"{name}Config.json"
-    if getattr(sys, "frozen", False) and not p.exists():
-        bundled = Path(sys._MEIPASS) / p.name   # 缺失则从打包内置副本播种
-        try:
-            if bundled.exists():
-                shutil.copy2(bundled, p)
-        except Exception:
-            pass
-    return p
+    return _dir() / f"{name}Config.json"
+
+
+def _example_section(name: str) -> dict:
+    """{name}Config.example.json 是入库的初始模板：真实配置文件缺失/损坏
+    时兜底。exe 旁允许用户自带 example 覆盖内置副本。"""
+    p = _dir() / f"{name}Config.example.json"
+    if not p.exists() and getattr(sys, "frozen", False):
+        p = Path(sys._MEIPASS) / p.name
+    try:
+        sec = json.loads(p.read_text(encoding="utf-8"))
+        return dict(sec) if isinstance(sec, dict) else {}
+    except Exception:
+        return {}
 
 
 def load(name: str) -> dict:
-    """读配置。文件不存在 → {}；**内容损坏 → 先备份再返回 {}**。
+    """读配置。文件不存在 → example.json 对应节；**内容损坏 → 先备份再兜底**。
 
     损坏必须留痕：静默当成空配置，紧接着的一次 save 就会把残骸
     覆盖掉——设备指纹全丢、下次登录生成新 device_id，正是风控
@@ -57,11 +66,8 @@ def load(name: str) -> dict:
         p = _path(name)
         try:
             raw = p.read_text(encoding="utf-8")
-        except FileNotFoundError:
-            return {}
-        except Exception as e:
-            print(f"[config] 读取 {p.name} 失败: {e}")
-            return {}
+        except Exception:
+            return _example_section(name)   # 不存在/读不了都走模板
         try:
             return json.loads(raw)
         except json.JSONDecodeError as e:
@@ -72,8 +78,8 @@ def load(name: str) -> dict:
             except Exception:
                 pass
             print(f"[config] !! {p.name} 内容损坏({e})，已备份为 {bak.name}；"
-                  f"本次按空配置处理，请人工核对后恢复")
-            return {}
+                  f"本次回退 example.json 模板，请人工核对后恢复")
+            return _example_section(name)
 
 
 def save(name: str, data: dict) -> None:
