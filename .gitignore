@@ -18,3 +18,7 @@ backend/accountsConfig.json
 # 杂项
 *.log
 /backend/src/png
+
+#测试文件夹
+/test
+
